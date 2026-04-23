@@ -43,6 +43,10 @@ Rules:
 - courses array should contain ALL items/courses found with individual amounts`;
 
 export async function scanWithGroq(base64Image: string, apiKey: string) {
+  if (!apiKey) {
+    console.error('Groq API Key is missing!');
+    return { status: 'error', message: 'Missing API Key' };
+  }
   try {
     console.log('Calling Groq Vision API directly...');
 
