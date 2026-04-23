@@ -1,0 +1,7 @@
+{
+  "name": "Remix: Lancer Studio",
+  "description": "A premium mobile-first ERP for tailoring institutes featuring student management, inventory tracking, and AI-powered receipt scanning.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
