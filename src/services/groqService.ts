@@ -57,7 +57,7 @@ export async function scanWithGroq(base64Image: string, apiKey: string) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "meta-llama/llama-4-scout-17b-16e-instruct",
+        model: "llama-3.2-11b-vision-preview",
         messages: [
           {
             role: "user",

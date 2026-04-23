@@ -205,7 +205,8 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
           handleStreamResult(result);
         } else {
           console.warn("AI Analysis failed completely or returned no text");
-          alert("AI Analysis was unable to read this image. Please try a clearer photo.");
+          setShowCamera(false);
+          setShowAddModal(true);
         }
         setIsScanning(false);
       };

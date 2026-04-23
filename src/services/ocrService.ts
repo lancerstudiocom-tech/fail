@@ -205,9 +205,13 @@ import { scanWithGroq } from './groqService';
 const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY || "";
 
 export async function scanReceiptLocal(base64Image: string): Promise<OCRResult | null> {
+  if (!GROQ_API_KEY) {
+    console.error('GROQ_API_KEY is missing! OCR will fail. Please check your .env file.');
+  }
+
   // 1. Try High-Speed Groq Llama-Vision (Primary)
   try {
-    console.log('Attempting Groq Llama-Vision Scan...');
+    console.log('Attempting Groq Llama-Vision Scan (Key present: ' + (GROQ_API_KEY ? 'Yes' : 'No') + ')...');
     const groqResult = await scanWithGroq(base64Image, GROQ_API_KEY);
     
     if (groqResult) {
