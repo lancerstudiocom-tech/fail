@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useFirebase } from '../context/FirebaseContext';
 import { Card, Button } from './ClayUI';
 import { motion, AnimatePresence } from 'motion/react';
 import { Package, Plus, Trash2, AlertTriangle, Check, RefreshCw } from 'lucide-react';
@@ -25,7 +26,7 @@ interface InventoryTransaction {
 }
 
 export const Stock: React.FC = () => {
-  const [items, setItems] = useState<InventoryItem[]>([]);
+  const { inventory: items, inventoryTransactions, addRecord, updateRecord, deleteRecord, loading: contextLoading } = useFirebase();
   const [showAddModal, setShowAddModal] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -35,39 +36,17 @@ export const Stock: React.FC = () => {
     costPerItem: 0
   });
 
-  const loadData = () => {
-    try {
-      const stored = JSON.parse(localStorage.getItem('tailor_inventory') || '[]');
-      setItems(stored);
-    } catch (err) {
-      console.error("Load error:", err);
-    }
-  };
-
-  useEffect(() => {
-    loadData();
-    window.addEventListener('storage', loadData);
-    return () => window.removeEventListener('storage', loadData);
-  }, []);
-
-  const handleAddItem = (e: React.FormEvent) => {
+  const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
 
     try {
-      const id = Date.now().toString();
       const record = {
-        id,
         ...newItem,
         quantityRemaining: newItem.totalQuantityBought,
         totalCost: newItem.totalQuantityBought * newItem.costPerItem,
-        createdAt: new Date().toISOString()
       };
 
-      const all = JSON.parse(localStorage.getItem('tailor_inventory') || '[]');
-      const updated = [...all, record];
-      localStorage.setItem('tailor_inventory', JSON.stringify(updated));
-
-      setItems(updated);
+      await addRecord('inventory', record);
       setShowSuccess(true);
       setTimeout(() => {
         setShowSuccess(false);
@@ -83,11 +62,11 @@ export const Stock: React.FC = () => {
     }
   };
 
-  const removeAllStock = () => {
+  const removeAllStock = async () => {
     try {
-      localStorage.removeItem('tailor_inventory');
-      localStorage.removeItem('tailor_inventory_transactions');
-      setItems([]);
+      for (const item of items) {
+        await deleteRecord('inventory', item.id);
+      }
       setShowDeleteConfirm(false);
     } catch (error) {
       console.error("Purge Error:", error);
@@ -101,28 +80,23 @@ export const Stock: React.FC = () => {
   const [sellingPrice, setSellingPrice] = useState<string>('');
   const [isRecordingUsage, setIsRecordingUsage] = useState(false);
 
-  const handleUsage = (e: React.FormEvent) => {
+  const handleUsage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedItem || !usageAmount) return;
 
     const amount = Number(usageAmount);
     const sPrice = Number(sellingPrice) || 0;
 
+    setIsRecordingUsage(true);
     try {
-      const all = JSON.parse(localStorage.getItem('tailor_inventory') || '[]');
-      const updated = all.map((item: any) => {
-        if (item.id === selectedItem.id) {
-          return { ...item, quantityRemaining: item.quantityRemaining - amount };
-        }
-        return item;
+      // 1. Update Inventory
+      await updateRecord('inventory', selectedItem.id, {
+        quantityRemaining: Number(selectedItem.quantityRemaining) - amount
       });
-      localStorage.setItem('tailor_inventory', JSON.stringify(updated));
 
-      // Record Transaction
-      const transactions = JSON.parse(localStorage.getItem('tailor_inventory_transactions') || '[]');
+      // 2. Record Transaction
       const profit = usageType === 'sale' ? (sPrice - selectedItem.costPerItem) * amount : 0;
-      const newTransaction = {
-        id: Date.now().toString(),
+      await addRecord('inventory_transactions', {
         itemId: selectedItem.id,
         itemName: selectedItem.name,
         type: usageType,
@@ -130,10 +104,8 @@ export const Stock: React.FC = () => {
         sellingPrice: usageType === 'sale' ? sPrice : null,
         profit,
         date: new Date().toISOString()
-      };
-      localStorage.setItem('tailor_inventory_transactions', JSON.stringify([...transactions, newTransaction]));
+      });
 
-      setItems(updated);
       setShowSuccess(true);
       setTimeout(() => {
         setShowSuccess(false);
@@ -145,6 +117,8 @@ export const Stock: React.FC = () => {
       }, 1000);
     } catch (err) {
       console.error("Usage error:", err);
+    } finally {
+      setIsRecordingUsage(false);
     }
   };
 
@@ -186,7 +160,7 @@ export const Stock: React.FC = () => {
         <Card className="p-6 glass-card flex flex-col gap-3">
           <p className="label-caps !text-[9px]">Profit (Sales)</p>
           <p className="font-headline text-2xl text-emerald-600 italic">
-            ₹{JSON.parse(localStorage.getItem('tailor_inventory_transactions') || '[]').reduce((acc: number, t: any) => acc + (t.profit || 0), 0)}
+            ₹{inventoryTransactions.reduce((acc: number, t: any) => acc + (t.profit || 0), 0)}
           </p>
         </Card>
       </div>

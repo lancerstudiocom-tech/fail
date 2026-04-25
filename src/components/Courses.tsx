@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useFirebase } from '../context/FirebaseContext';
 import { Card, Button } from './ClayUI';
 import { GraduationCap, Plus, Trash2, BookOpen, Check, X, CreditCard, Calendar, IndianRupee, FileDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -43,10 +44,17 @@ interface StudentCourse {
 }
 
 export const Courses: React.FC = () => {
-  const [courses, setCourses] = useState<Course[]>([]);
-  const [students, setStudents] = useState<Student[]>([]);
-  const [studentCourses, setStudentCourses] = useState<StudentCourse[]>([]);
-  const [attendance, setAttendance] = useState<Attendance[]>([]);
+  const { 
+    courses, 
+    students, 
+    studentCourses, 
+    attendance, 
+    addRecord, 
+    updateRecord, 
+    deleteRecord, 
+    loading: contextLoading 
+  } = useFirebase();
+  
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [studentToDelete, setStudentToDelete] = useState<string | null>(null);
@@ -62,6 +70,7 @@ export const Courses: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  
   const [newCourse, setNewCourse] = useState({
     name: '',
     duration: '',
@@ -87,32 +96,11 @@ export const Courses: React.FC = () => {
     date: new Date().toISOString().split('T')[0]
   });
 
-  const loadData = () => {
-    try {
-      setCourses(JSON.parse(localStorage.getItem('tailor_courses') || '[]'));
-      setStudents(JSON.parse(localStorage.getItem('tailor_students') || '[]'));
-      setStudentCourses(JSON.parse(localStorage.getItem('tailor_student_courses') || '[]'));
-      setAttendance(JSON.parse(localStorage.getItem('tailor_attendance') || '[]'));
-    } catch (err) {
-      console.error("Load error:", err);
-    }
-  };
-
-  useEffect(() => {
-    loadData();
-    window.addEventListener('storage', loadData);
-    return () => window.removeEventListener('storage', loadData);
-  }, []);
-
-  const handleAddCourse = (e: React.FormEvent) => {
+  const handleAddCourse = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsSubmitting(true);
     try {
-      const id = Date.now().toString();
-      const record = { id, ...newCourse };
-      const all = JSON.parse(localStorage.getItem('tailor_courses') || '[]');
-      const updated = [...all, record];
-      localStorage.setItem('tailor_courses', JSON.stringify(updated));
-      setCourses(updated);
+      await addRecord('courses', newCourse);
       setShowSuccess(true);
       setTimeout(() => {
         setShowSuccess(false);
@@ -121,17 +109,18 @@ export const Courses: React.FC = () => {
       }, 1000);
     } catch (err) {
       console.error("Save error:", err);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const handleEditCourse = (e: React.FormEvent) => {
+  const handleEditCourse = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingCourse) return;
+    setIsSubmitting(true);
     try {
-      const all = JSON.parse(localStorage.getItem('tailor_courses') || '[]');
-      const updated = all.map((c: Course) => c.id === editingCourse.id ? editingCourse : c);
-      localStorage.setItem('tailor_courses', JSON.stringify(updated));
-      setCourses(updated);
+      const { id, ...data } = editingCourse;
+      await updateRecord('courses', id, data);
       setShowEditSuccess(true);
       setTimeout(() => {
         setShowEditSuccess(false);
@@ -140,6 +129,8 @@ export const Courses: React.FC = () => {
       }, 1000);
     } catch (err) {
       console.error("Edit error:", err);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -154,34 +145,29 @@ export const Courses: React.FC = () => {
     setShowAddStudentModal(true);
   };
 
-  const handleAddStudent = (e: React.FormEvent) => {
+  const handleAddStudent = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsSubmitting(true);
     try {
-      const studentId = Date.now().toString();
-      const studentRecord = {
-        id: studentId,
-        ...newStudent,
+      // 1. Add Student
+      const studentId = await addRecord('students', {
+        name: newStudent.name,
+        courses: newStudent.courses,
+        totalFee: newStudent.totalFee,
         amountPaid: newStudent.initialAmount,
-        balance: newStudent.totalFee - newStudent.initialAmount,
-        createdAt: new Date().toISOString()
-      };
+        balance: newStudent.totalFee - newStudent.initialAmount
+      });
 
-      const allStudents = JSON.parse(localStorage.getItem('tailor_students') || '[]');
-      localStorage.setItem('tailor_students', JSON.stringify([...allStudents, studentRecord]));
+      // 2. Add to StudentCourses
+      for (const cName of newStudent.courses) {
+        await addRecord('student_courses', {
+          studentId,
+          courseName: cName,
+          amountPaid: newStudent.initialAmount / newStudent.courses.length,
+          date: new Date().toISOString().split('T')[0]
+        });
+      }
 
-      // Add to StudentCourses
-      const allStudentCourses = JSON.parse(localStorage.getItem('tailor_student_courses') || '[]');
-      const newEnrollments = newStudent.courses.map(cName => ({
-        id: Date.now().toString() + Math.random(),
-        studentId,
-        courseName: cName,
-        amountPaid: newStudent.initialAmount / newStudent.courses.length,
-        date: new Date().toISOString().split('T')[0],
-        createdAt: new Date().toISOString()
-      }));
-      localStorage.setItem('tailor_student_courses', JSON.stringify([...allStudentCourses, ...newEnrollments]));
-
-      loadData();
       setShowStudentSuccess(true);
       setTimeout(() => {
         setShowStudentSuccess(false);
@@ -190,46 +176,36 @@ export const Courses: React.FC = () => {
       }, 1000);
     } catch (err) {
       console.error("Save student error:", err);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const handleRecordPayment = (e: React.FormEvent) => {
+  const handleRecordPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedStudent) return;
 
+    setIsSubmitting(true);
     try {
       const paymentAmount = Number(paymentData.amount);
       const studentId = selectedStudent.id;
 
       // 1. Update Student
-      const allStudents = JSON.parse(localStorage.getItem('tailor_students') || '[]');
-      const updatedStudents = allStudents.map((s: any) => {
-        if (s.id === studentId) {
-          return {
-            ...s,
-            amountPaid: Number(s.amountPaid) + paymentAmount,
-            balance: Number(s.balance) - paymentAmount
-          };
-        }
-        return s;
+      await updateRecord('students', studentId, {
+        amountPaid: Number(selectedStudent.amountPaid || 0) + paymentAmount,
+        balance: Number(selectedStudent.balance || 0) - paymentAmount
       });
-      localStorage.setItem('tailor_students', JSON.stringify(updatedStudents));
 
       // 2. Record Payment
-      const allPayments = JSON.parse(localStorage.getItem('tailor_payments') || '[]');
-      const newPayment = {
-        id: Date.now().toString(),
+      await addRecord('payments', {
         studentId,
         studentName: selectedStudent.name,
         amount: paymentAmount,
         type: 'credit',
         method: paymentData.method,
-        date: paymentData.date,
-        createdAt: new Date().toISOString()
-      };
-      localStorage.setItem('tailor_payments', JSON.stringify([...allPayments, newPayment]));
+        date: paymentData.date
+      });
 
-      loadData();
       setShowPaymentSuccess(true);
       setTimeout(() => {
         setShowPaymentSuccess(false);
@@ -239,31 +215,30 @@ export const Courses: React.FC = () => {
           method: 'Cash',
           date: new Date().toISOString().split('T')[0]
         });
-        setSelectedStudent(updatedStudents.find((s: any) => s.id === studentId));
+        setSelectedStudent({
+          ...selectedStudent,
+          amountPaid: Number(selectedStudent.amountPaid || 0) + paymentAmount,
+          balance: Number(selectedStudent.balance || 0) - paymentAmount
+        });
       }, 1000);
     } catch (err) {
       console.error("Payment error:", err);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const deleteCourse = (id: string) => {
+  const deleteCourse = async (id: string) => {
     try {
-      const all = JSON.parse(localStorage.getItem('tailor_courses') || '[]');
-      const updated = all.filter((c: any) => c.id !== id);
-      localStorage.setItem('tailor_courses', JSON.stringify(updated));
-      setCourses(updated);
+      await deleteRecord('courses', id);
     } catch (err) {
       console.error("Delete error:", err);
     }
   };
 
-  const deleteStudent = (id: string) => {
+  const deleteStudent = async (id: string) => {
     try {
-      const all = JSON.parse(localStorage.getItem('tailor_students') || '[]');
-      const updated = all.filter((s: any) => s.id !== id);
-      localStorage.setItem('tailor_students', JSON.stringify(updated));
-      
-      setStudents(updated);
+      await deleteRecord('students', id);
       setSelectedStudent(null);
       setStudentToDelete(null);
       setShowDeleteConfirm(false);
@@ -272,27 +247,21 @@ export const Courses: React.FC = () => {
     }
   };
 
-  const handleMarkAttendance = (studentId: string, courseName: string, status: 'present' | 'absent') => {
+  const handleMarkAttendance = async (studentId: string, courseName: string, status: 'present' | 'absent') => {
     try {
-      const all = JSON.parse(localStorage.getItem('tailor_attendance') || '[]');
       const dateToMark = selectedDate;
-      const existingIndex = all.findIndex((a: any) => a.studentId === studentId && a.date === dateToMark);
+      const existing = attendance.find((a: any) => a.studentId === studentId && a.date === dateToMark);
 
-      let updated;
-      if (existingIndex > -1) {
-        updated = [...all];
-        updated[existingIndex].status = status;
+      if (existing) {
+        await updateRecord('attendance', existing.id, { status });
       } else {
-        updated = [...all, {
-          id: Date.now().toString(),
+        await addRecord('attendance', {
           studentId,
           courseName,
           date: dateToMark,
           status
-        }];
+        });
       }
-      localStorage.setItem('tailor_attendance', JSON.stringify(updated));
-      setAttendance(updated);
     } catch (err) {
       console.error("Attendance error:", err);
     }

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useFirebase } from '../context/FirebaseContext';
 import { Card, Button } from './ClayUI';
 import { Briefcase, Clock, Check, Package, ChevronRight, AlertTriangle, Camera, Lock } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -14,7 +15,7 @@ interface WorkOrder {
 }
 
 export const Works: React.FC = () => {
-  const [orders, setOrders] = useState<WorkOrder[]>([]);
+  const { customers: orders, updateRecord, loading: contextLoading } = useFirebase();
   const [scanningOrder, setScanningOrder] = useState<WorkOrder | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
@@ -22,27 +23,9 @@ export const Works: React.FC = () => {
   const [showPasswordInput, setShowPasswordInput] = useState(false);
   const [password, setPassword] = useState('');
 
-  const loadData = () => {
+  const updateStatus = async (orderId: string, newStatus: string) => {
     try {
-      const customers = JSON.parse(localStorage.getItem('tailor_customers') || '[]');
-      setOrders(customers);
-    } catch (err) {
-      console.error("Load error:", err);
-    }
-  };
-
-  useEffect(() => {
-    loadData();
-    window.addEventListener('storage', loadData);
-    return () => window.removeEventListener('storage', loadData);
-  }, []);
-
-  const updateStatus = (orderId: string, newStatus: string) => {
-    try {
-      const all = JSON.parse(localStorage.getItem('tailor_customers') || '[]');
-      const updated = all.map((c: any) => c.id === orderId ? { ...c, status: newStatus } : c);
-      localStorage.setItem('tailor_customers', JSON.stringify(updated));
-      setOrders(updated);
+      await updateRecord('customers', orderId, { status: newStatus });
     } catch (err) {
       console.error("Update error:", err);
     }

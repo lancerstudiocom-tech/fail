@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useFirebase } from '../context/FirebaseContext';
 import { Card, Button } from './ClayUI';
 import { Plus, Trash2, UserPlus, Search, Users, Camera, Image, X, Check, Loader2, FileDown, AlertTriangle, RefreshCw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -47,12 +48,11 @@ interface StudentsProps {
 }
 
 export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
-  const [students, setStudents] = useState<Student[]>([]);
+  const { students, payments, studentCourses, addRecord, updateRecord, deleteRecord, loading: contextLoading } = useFirebase();
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [loading, setLoading] = useState(false);
   const [studentPayments, setStudentPayments] = useState<Payment[]>([]);
-  const [studentCourses, setStudentCourses] = useState<StudentCourse[]>([]);
-  const [isFetchingPayments, setIsFetchingPayments] = useState(false);
+  const [currentStudentCourses, setCurrentStudentCourses] = useState<StudentCourse[]>([]);
   const [paymentAmount, setPaymentAmount] = useState<string>('');
   const [isRecordingPayment, setIsRecordingPayment] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -81,26 +81,12 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [studentToDelete, setStudentToDelete] = useState<string | null>(null);
 
-  const loadData = () => {
-    setLoading(true);
-    try {
-      const stored = JSON.parse(localStorage.getItem('tailor_students') || '[]');
-      setStudents(stored);
-    } catch (err) {
-      console.error("Load error:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    loadData();
-    
-    // Listen for changes (simulated)
-    const handleStorage = () => loadData();
-    window.addEventListener('storage', handleStorage);
-    return () => window.removeEventListener('storage', handleStorage);
-  }, []);
+    if (initialSelectedId) {
+      const student = students.find(s => s.id === initialSelectedId);
+      if (student) setSelectedStudent(student);
+    }
+  }, [initialSelectedId, students]);
 
   // Auto-calculate total fee when courses change
   useEffect(() => {
@@ -111,39 +97,36 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
     }
   }, [newStudent.courses, isSaving]);
 
-  const fetchPayments = (studentId: string) => {
-    const allPayments = JSON.parse(localStorage.getItem('tailor_payments') || '[]');
-    const filtered = allPayments.filter((p: any) => p.studentId === studentId);
-    setStudentPayments(filtered.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()));
-  };
-
   useEffect(() => {
     if (selectedStudent) {
-      fetchPayments(selectedStudent.id);
-      fetchStudentCourses(selectedStudent.id);
+      const filteredPayments = payments
+        .filter((p: any) => p.studentId === selectedStudent.id)
+        .sort((a: any, b: any) => {
+          const dateA = a.date?.toDate ? a.date.toDate() : new Date(a.date);
+          const dateB = b.date?.toDate ? b.date.toDate() : new Date(b.date);
+          return dateB.getTime() - dateA.getTime();
+        });
+      setStudentPayments(filteredPayments);
+
+      const filteredCourses = studentCourses.filter((c: any) => c.studentId === selectedStudent.id);
+      setCurrentStudentCourses(filteredCourses);
     } else {
       setStudentPayments([]);
       setPaymentAmount('');
-      setStudentCourses([]);
+      setCurrentStudentCourses([]);
     }
-  }, [selectedStudent]);
+  }, [selectedStudent, payments, studentCourses]);
 
-  const fetchStudentCourses = (studentId: string) => {
-    const allCourses = JSON.parse(localStorage.getItem('tailor_student_courses') || '[]');
-    const filtered = allCourses.filter((c: any) => c.studentId === studentId);
-    setStudentCourses(filtered);
-  };
-
-  const handleRecordPayment = (e: React.FormEvent) => {
+  const handleRecordPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedStudent || !paymentAmount) return;
 
     const amount = Number(paymentAmount);
     if (isNaN(amount) || amount <= 0) return;
 
+    setIsRecordingPayment(true);
     try {
       const paymentData = {
-        id: Date.now().toString(),
         studentId: selectedStudent.id,
         amount: amount,
         type: 'credit',
@@ -152,35 +135,22 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
         date: new Date().toISOString()
       };
 
-      // Update Payments
-      const allPayments = JSON.parse(localStorage.getItem('tailor_payments') || '[]');
-      const updatedPayments = [...allPayments, paymentData];
-      localStorage.setItem('tailor_payments', JSON.stringify(updatedPayments));
+      // 1. Add Payment Record
+      await addRecord('payments', paymentData);
 
-      // Update Student
-      const allStudents = JSON.parse(localStorage.getItem('tailor_students') || '[]');
-      const updatedStudents = allStudents.map((s: any) => {
-        if (s.id === selectedStudent.id) {
-          return {
-            ...s,
-            amountPaid: s.amountPaid + amount,
-            balance: s.balance - amount
-          };
-        }
-        return s;
+      // 2. Update Student Record
+      await updateRecord('students', selectedStudent.id, {
+        amountPaid: (selectedStudent.amountPaid || 0) + amount,
+        balance: (selectedStudent.balance || 0) - amount
       });
-      localStorage.setItem('tailor_students', JSON.stringify(updatedStudents));
 
-      const updatedStudent = updatedStudents.find((s: any) => s.id === selectedStudent.id);
-      setSelectedStudent(updatedStudent);
-      setStudents(updatedStudents);
-      
-      fetchPayments(selectedStudent.id);
       setPaymentAmount('');
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 2000);
     } catch (error) {
       console.error("Payment error:", error);
+    } finally {
+      setIsRecordingPayment(false);
     }
   };
 
@@ -250,7 +220,7 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
     setBalance(newStudent.totalFee - newStudent.initialAmount);
   }, [newStudent.totalFee, newStudent.initialAmount]);
 
-  const handleAddStudent = (e?: React.FormEvent) => {
+  const handleAddStudent = async (e?: React.FormEvent) => {
     e?.preventDefault();
 
     if (!newStudent.name) {
@@ -258,57 +228,46 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
       return;
     }
 
+    setIsSaving(true);
     try {
       const totalFee = Number(newStudent.totalFee) || 0;
       const initialAmount = Number(newStudent.initialAmount) || 0;
-      const balance = totalFee - initialAmount;
-      const studentId = Date.now().toString();
+      const balanceValue = totalFee - initialAmount;
 
       // 1. Save Student
-      const newRecord = {
-        id: studentId,
+      const studentId = await addRecord('students', {
         name: newStudent.name,
         phone: newStudent.phone || 'N/A',
         courses: newStudent.courses.map(c => c.name),
         totalFee: totalFee,
         amountPaid: initialAmount,
-        balance: balance,
-        createdAt: new Date().toISOString()
-      };
-
-      const allStudents = JSON.parse(localStorage.getItem('tailor_students') || '[]');
-      localStorage.setItem('tailor_students', JSON.stringify([...allStudents, newRecord]));
+        balance: balanceValue
+      });
 
       // 2. Save Course Records
-      const allCourseRecords = JSON.parse(localStorage.getItem('tailor_student_courses') || '[]');
-      const newCourseRecords = newStudent.courses.map(course => ({
-        id: Date.now().toString() + Math.random(),
-        studentId,
-        courseName: course.name,
-        amountPaid: course.amount || 0,
-        receiptNo: newStudent.receiptNumber || 'N/A',
-        date: newStudent.date || new Date().toISOString().split('T')[0],
-        paymentMethod: newStudent.paymentMethod || 'Cash',
-        createdAt: new Date().toISOString()
-      }));
-      localStorage.setItem('tailor_student_courses', JSON.stringify([...allCourseRecords, ...newCourseRecords]));
+      for (const course of newStudent.courses) {
+        await addRecord('student_courses', {
+          studentId,
+          courseName: course.name,
+          amountPaid: course.amount || 0,
+          receiptNo: newStudent.receiptNumber || 'N/A',
+          date: newStudent.date || new Date().toISOString().split('T')[0],
+          paymentMethod: newStudent.paymentMethod || 'Cash'
+        });
+      }
 
       // 3. Save Payment Record
       if (initialAmount > 0) {
-        const allPayments = JSON.parse(localStorage.getItem('tailor_payments') || '[]');
-        const newPayment = {
-          id: Date.now().toString() + Math.random(),
+        await addRecord('payments', {
           studentId,
           amount: initialAmount,
           type: 'credit',
           method: newStudent.paymentMethod || 'Cash',
           notes: `Initial payment for: ${newStudent.courses.map(c => c.name).join(', ')}`,
           date: new Date().toISOString()
-        };
-        localStorage.setItem('tailor_payments', JSON.stringify([...allPayments, newPayment]));
+        });
       }
 
-      setStudents([...allStudents, newRecord]);
       setShowSuccess(true);
       
       setTimeout(() => {
@@ -331,28 +290,27 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
     } catch (error: any) {
       console.error("Save Error:", error);
       alert("Error: Could not save record");
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const removeAllStudents = () => {
+  const removeAllStudents = async () => {
     try {
-      localStorage.removeItem('tailor_students');
-      localStorage.removeItem('tailor_payments');
-      localStorage.removeItem('tailor_student_courses');
-      setStudents([]);
+      // For Firestore, we typically delete one by one or via batch
+      // Purge is dangerous, but we'll implement it as requested
+      for (const s of students) {
+        await deleteRecord('students', s.id);
+      }
       setShowDeleteConfirm(false);
     } catch (error) {
       console.error("Purge Error:", error);
     }
   };
 
-  const deleteStudent = (id: string) => {
+  const deleteStudent = async (id: string) => {
     try {
-      const allStudents = JSON.parse(localStorage.getItem('tailor_students') || '[]');
-      const updated = allStudents.filter((s: any) => s.id !== id);
-      localStorage.setItem('tailor_students', JSON.stringify(updated));
-      
-      setStudents(updated);
+      await deleteRecord('students', id);
       setSelectedStudent(null);
       setStudentToDelete(null);
       setShowDeleteConfirm(false);

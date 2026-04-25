@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useFirebase } from '../context/FirebaseContext';
 import { Card, Button } from './ClayUI';
 import { motion, AnimatePresence } from 'motion/react';
 import { scanReceiptLocal, parseOCRText } from '../services/ocrService';
@@ -70,7 +71,7 @@ interface MeasurementHistory {
 }
 
 export const Customers: React.FC<CustomersProps> = ({ triggerScan, onScanHandled }) => {
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  const { customers, measurements, addRecord, updateRecord, deleteRecord, loading: contextLoading } = useFirebase();
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showReviewModal, setShowReviewModal] = useState(false);
@@ -83,8 +84,7 @@ export const Customers: React.FC<CustomersProps> = ({ triggerScan, onScanHandled
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
-  const [measurementHistory, setMeasurementHistory] = useState<MeasurementHistory[]>([]);
-  const [isFetchingHistory, setIsFetchingHistory] = useState(false);
+  const [currentMeasurementHistory, setCurrentMeasurementHistory] = useState<MeasurementHistory[]>([]);
 
   useEffect(() => {
     if (triggerScan) {
@@ -111,20 +111,6 @@ export const Customers: React.FC<CustomersProps> = ({ triggerScan, onScanHandled
     rawText: ''
   });
 
-  const loadData = () => {
-    try {
-      const stored = JSON.parse(localStorage.getItem('tailor_customers') || '[]');
-      setCustomers(stored);
-    } catch (err) {
-      console.error("Load error:", err);
-    }
-  };
-
-  useEffect(() => {
-    loadData();
-    window.addEventListener('storage', loadData);
-    return () => window.removeEventListener('storage', loadData);
-  }, []);
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -193,36 +179,34 @@ export const Customers: React.FC<CustomersProps> = ({ triggerScan, onScanHandled
   }, [newCustomer.totalBill, newCustomer.initialAmount]);
 
 
-  const handleSaveCustomer = (e: React.FormEvent) => {
+  const handleSaveCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCustomer.name) return;
 
+    setIsScanning(true);
     try {
-      const id = Date.now().toString();
       const record = {
-        id,
-        ...newCustomer,
+        name: newCustomer.name,
+        phone: newCustomer.phone,
         status: 'Active',
         entryDate: new Date().toISOString(),
-        balance: newCustomer.totalBill - newCustomer.initialAmount
+        deliveryDate: newCustomer.deliveryDate,
+        totalBill: newCustomer.totalBill,
+        initialAmount: newCustomer.initialAmount,
+        balance: newCustomer.totalBill - newCustomer.initialAmount,
+        measurements: newCustomer.measurements
       };
 
-      const all = JSON.parse(localStorage.getItem('tailor_customers') || '[]');
-      const updated = [...all, record];
-      localStorage.setItem('tailor_customers', JSON.stringify(updated));
+      const customerId = await addRecord('customers', record);
       
       // Save History
-      const history = JSON.parse(localStorage.getItem('tailor_measurement_history') || '[]');
-      const historyEntry = {
-        id: Date.now().toString() + '-h',
-        customerId: id,
+      await addRecord('measurements', {
+        customerId,
         type: 'Initial',
         data: newCustomer.measurements,
         date: new Date().toISOString()
-      };
-      localStorage.setItem('tailor_measurement_history', JSON.stringify([...history, historyEntry]));
+      });
 
-      setCustomers(updated);
       setShowSuccess(true);
       setTimeout(() => {
         setShowSuccess(false);
@@ -242,30 +226,27 @@ export const Customers: React.FC<CustomersProps> = ({ triggerScan, onScanHandled
       }, 1000);
     } catch (err) {
       console.error("Save error:", err);
+    } finally {
+      setIsScanning(false);
     }
   };
 
-  const handleUpdateCustomer = (e: React.FormEvent) => {
+  const handleUpdateCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingCustomer) return;
 
     try {
-      const all = JSON.parse(localStorage.getItem('tailor_customers') || '[]');
-      const updated = all.map((c: any) => c.id === editingCustomer.id ? editingCustomer : c);
-      localStorage.setItem('tailor_customers', JSON.stringify(updated));
+      const { id, ...data } = editingCustomer;
+      await updateRecord('customers', id, data);
 
       // Save to history if measurements changed
-      const history = JSON.parse(localStorage.getItem('tailor_measurement_history') || '[]');
-      const historyEntry = {
-        id: Date.now().toString() + '-up',
+      await addRecord('measurements', {
         customerId: editingCustomer.id,
         type: 'Update',
         data: editingCustomer.measurements,
         date: new Date().toISOString()
-      };
-      localStorage.setItem('tailor_measurement_history', JSON.stringify([...history, historyEntry]));
+      });
 
-      setCustomers(updated);
       setShowEditModal(false);
       setEditingCustomer(null);
     } catch (err) {
@@ -273,17 +254,12 @@ export const Customers: React.FC<CustomersProps> = ({ triggerScan, onScanHandled
     }
   };
 
-  const deleteCustomer = (id: string) => {
+  const deleteCustomer = async (id: string) => {
     try {
-      const all = JSON.parse(localStorage.getItem('tailor_customers') || '[]');
-      const updated = all.filter((c: any) => c.id !== id);
-      localStorage.setItem('tailor_customers', JSON.stringify(updated));
+      await deleteRecord('customers', id);
+      // Optional: Delete related measurements too? 
+      // Firestore doesn't cascade, but we can do it manually if needed.
       
-      const history = JSON.parse(localStorage.getItem('tailor_measurement_history') || '[]');
-      const updatedHistory = history.filter((h: any) => h.customerId !== id);
-      localStorage.setItem('tailor_measurement_history', JSON.stringify(updatedHistory));
-
-      setCustomers(updated);
       setShowDeleteConfirm(false);
       setCustomerToDelete(null);
     } catch (error) {
@@ -292,13 +268,12 @@ export const Customers: React.FC<CustomersProps> = ({ triggerScan, onScanHandled
   };
 
   const fetchMeasurementHistory = (customerId: string) => {
-    try {
-      const all = JSON.parse(localStorage.getItem('tailor_measurement_history') || '[]');
-      const history = all.filter((h: any) => h.customerId === customerId);
-      setMeasurementHistory(history.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()));
-    } catch (err) {
-      console.error("History Error:", err);
-    }
+    const history = (measurements as any[]).filter((h: any) => h.customerId === customerId);
+    setCurrentMeasurementHistory(history.sort((a: any, b: any) => {
+      const dateA = a.date?.toDate ? a.date.toDate() : new Date(a.date);
+      const dateB = b.date?.toDate ? b.date.toDate() : new Date(b.date);
+      return dateB.getTime() - dateA.getTime();
+    }));
   };
 
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -307,9 +282,9 @@ export const Customers: React.FC<CustomersProps> = ({ triggerScan, onScanHandled
     if (selectedCustomer) {
       fetchMeasurementHistory(selectedCustomer.id);
     } else {
-      setMeasurementHistory([]);
+      setCurrentMeasurementHistory([]);
     }
-  }, [selectedCustomer]);
+  }, [selectedCustomer, measurements]);
 
   return (
     <div className="p-6 flex flex-col gap-8 relative min-h-[calc(100vh-200px)] pb-32">
