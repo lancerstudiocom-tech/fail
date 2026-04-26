@@ -171,6 +171,15 @@ export const Students: React.FC<StudentsProps> = React.memo(({ initialSelectedId
       return;
     }
 
+    // Check for duplicate name
+    const isDuplicate = students.some(s => s.name?.toLowerCase().trim() === newStudent.name.toLowerCase().trim());
+    if (isDuplicate) {
+      const confirmed = window.confirm(`A student named "${newStudent.name}" already exists. Are you sure you want to save a duplicate record?`);
+      if (!confirmed) {
+        return;
+      }
+    }
+
     setIsSaving(true);
     try {
       const totalFee = Number(newStudent.totalFee) || 0;
@@ -250,12 +259,28 @@ export const Students: React.FC<StudentsProps> = React.memo(({ initialSelectedId
 
   const deleteStudent = async (id: string) => {
     try {
+      // 1. Delete all related payments to satisfy foreign key constraints
+      const relatedPayments = payments.filter(p => p.studentId === id);
+      for (const p of relatedPayments) {
+        await deleteRecord('payments', p.id);
+      }
+
+      // 2. Delete all related course records
+      const relatedCourses = studentCourses.filter(c => c.studentId === id);
+      for (const c of relatedCourses) {
+        await deleteRecord('student_courses', c.id);
+      }
+
+      // 3. Finally, delete the student record itself
       await deleteRecord('students', id);
+      
       setSelectedStudent(null);
       setStudentToDelete(null);
       setShowDeleteConfirm(false);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Delete Error:", error);
+      alert("Failed to delete student: " + (error.message || "Please check your connection."));
+      setShowDeleteConfirm(false);
     }
   };
 

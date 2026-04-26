@@ -60,12 +60,16 @@ export interface InventoryTransaction {
 
 export interface Customer {
   id: string;
+  billId: string;
   name: string;
   phone: string;
   notes?: string;
   status: 'Pending' | 'Completed' | 'Out for Delivery' | 'Received';
   totalBill: number;
   balance: number;
+  receiptNo: string;
+  deliveryDate: string;
+  billUrl?: string;
   createdAt: any;
 }
 

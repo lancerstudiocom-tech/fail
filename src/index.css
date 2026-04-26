@@ -232,6 +232,30 @@
 
 /* Global Overrides for dark mode issues */
 .dark .bg-white { @apply !bg-surface; }
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #printable-bill, #printable-bill * {
+    visibility: visible;
+  }
+  #printable-bill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 20px;
+    background: white !important;
+    color: black !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+  .print-hidden {
+    display: none !important;
+  }
+}
 .dark .text-black { @apply !text-white; }
 .dark .text-primary\/40 { @apply !text-white/40; }
 .dark .text-primary\/60 { @apply !text-white/60; }

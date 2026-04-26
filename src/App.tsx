@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Scissors, Camera, RefreshCw, Home, Users, Package, UserCircle, Briefcase, Settings, GraduationCap, Ruler, X, LifeBuoy, Moon, Sun } from 'lucide-react';
+import { Scissors, Camera, RefreshCw, Home, Users, Package, UserCircle, Briefcase, Settings, GraduationCap, Ruler, X, LifeBuoy, Moon, Sun, Search } from 'lucide-react';
 import { Card, Button } from './components/ClayUI';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
@@ -11,6 +11,7 @@ import { Customers } from './components/Customers';
 import { Works } from './components/Works';
 import { Courses } from './components/Courses';
 import { SettingsPage } from './components/SettingsPage';
+import { BillSearch } from './components/BillSearch';
 import { useSupabase } from './context/SupabaseContext';
 import { Login } from './components/Login';
 import { LogOut } from 'lucide-react';
@@ -89,6 +90,7 @@ export default function App() {
       case 'inventory': return <Stock />;
       case 'customers': return <Customers />;
       case 'works': return <Works />;
+      case 'bill_search': return <BillSearch />;
       case 'settings': return <SettingsPage theme={theme} toggleTheme={toggleTheme} onLogout={handleLogout} />;
       default: return (
         <Dashboard 
@@ -107,7 +109,7 @@ export default function App() {
     )}>
       <div className="w-full max-w-[500px] min-h-screen relative overflow-x-hidden bg-transparent">
         {/* TopAppBar */}
-        <header className="bg-white/60 dark:bg-black/60 backdrop-blur-xl sticky top-0 z-50 h-24 flex items-center transition-all">
+        <header className="bg-surface/5 backdrop-blur-md sticky top-0 z-50 h-24 flex items-center transition-all border-b border-primary/5">
           <div className="flex justify-between items-center w-full px-6">
             <div className="flex items-center gap-6 overflow-hidden">
               <button 
@@ -207,13 +209,14 @@ export default function App() {
                 </button>
               </div>
  
-              <nav className="flex-1 space-y-8">
+              <nav className="flex-1 space-y-4 sm:space-y-6 overflow-y-auto py-2 scrollbar-hide">
                 <SidebarItem icon={<Home className="w-7 h-7" />} label="Dashboard" active={activeTab === 'dashboard'} onClick={() => { setActiveTab('dashboard'); setIsSidebarOpen(false); }} />
                 <SidebarItem icon={<GraduationCap className="w-7 h-7" />} label="Courses" active={activeTab === 'courses'} onClick={() => { setActiveTab('courses'); setIsSidebarOpen(false); }} />
                 <SidebarItem icon={<Users className="w-7 h-7" />} label="Students" active={activeTab === 'students'} onClick={() => { setActiveTab('students'); setIsSidebarOpen(false); }} />
                 <SidebarItem icon={<Briefcase className="w-7 h-7" />} label="Works" active={activeTab === 'works'} onClick={() => { setActiveTab('works'); setIsSidebarOpen(false); }} />
                 <SidebarItem icon={<Package className="w-7 h-7" />} label="Inventory" active={activeTab === 'inventory'} onClick={() => { setActiveTab('inventory'); setIsSidebarOpen(false); }} />
                 <SidebarItem icon={<UserCircle className="w-7 h-7" />} label="Customers" active={activeTab === 'customers'} onClick={() => { setActiveTab('customers'); setIsSidebarOpen(false); }} />
+                <SidebarItem icon={<Search className="w-7 h-7" />} label="Bill Lookup" active={activeTab === 'bill_search'} onClick={() => { setActiveTab('bill_search'); setIsSidebarOpen(false); }} />
                 <SidebarItem icon={<Settings className="w-7 h-7" />} label="Settings" active={activeTab === 'settings'} onClick={() => { setActiveTab('settings'); setIsSidebarOpen(false); }} />
               </nav>
  

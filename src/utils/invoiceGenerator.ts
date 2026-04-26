@@ -25,9 +25,10 @@ interface InvoiceData {
   fabricImage?: string; // base64
   fabricRef?: string;
   autoPrint?: boolean;
+  onlyBlob?: boolean;
 }
 
-export const generateInvoicePDF = (data: InvoiceData) => {
+export const generateInvoicePDF = (data: InvoiceData): Blob | void => {
   const doc = new jsPDF();
   const pageWidth = doc.internal.pageSize.getWidth();
   
@@ -234,6 +235,10 @@ export const generateInvoicePDF = (data: InvoiceData) => {
   doc.setTextColor(180, 180, 180);
   doc.text("AUTHORIZED MASTER TAILOR SIGNATURE", pageWidth / 2, footerY + 25, { align: 'center' });
 
+  if (data.onlyBlob) {
+    return doc.output('blob');
+  }
+
   if (data.autoPrint) {
     doc.autoPrint();
     const hsn = doc.output('bloburl');
@@ -249,4 +254,6 @@ export const generateInvoicePDF = (data: InvoiceData) => {
       doc.save(fileName);
     }
   }
+
+  return doc.output('blob');
 };

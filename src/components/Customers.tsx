@@ -4,6 +4,8 @@ import { Card, Button } from './ClayUI';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { BillScanner } from './BillScanner';
+import { generateInvoicePDF } from '../utils/invoiceGenerator';
+import { supabase } from '../lib/supabase';
 
 // --- Types ---
 interface Measurements {
@@ -28,7 +30,7 @@ interface Customer {
 }
 
 export const Customers: React.FC = React.memo(() => {
-  const { customers: rawCustomers, measurements: rawHistory, addRecord, updateRecord, deleteRecord, loading: contextLoading } = useSupabase();
+  const { customers: rawCustomers, measurements: rawHistory, addRecord, updateRecord, deleteRecord, uploadFile, loading: contextLoading } = useSupabase();
   
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
@@ -59,15 +61,29 @@ export const Customers: React.FC = React.memo(() => {
   });
 
   // Derived
-  const customers = useMemo(() => (rawCustomers as any[]).map(c => ({
-    id: c.id,
-    name: c.name || '',
-    phone: c.phone || '',
-    status: c.status || 'Pending',
-    totalBill: Number(c.total_bill || c.totalBill || 0),
-    balance: Number(c.balance || 0),
-    deliveryDate: c.receipt_no || c.receiptNo || '',
-  })), [rawCustomers]);
+  const customers = useMemo(() => (rawCustomers as any[]).map(c => {
+    const receiptParts = (c.receipt_no || c.receiptNo || '').split(' | ');
+    let billId = c.bill_id || c.billId || '';
+    if (!billId && receiptParts[0] && receiptParts[0].startsWith('#INV-')) {
+       billId = receiptParts[0].replace('#INV-', '');
+    }
+    
+    // Derive URL dynamically without needing a DB column
+    const { data: { publicUrl } } = supabase.storage.from('invoices').getPublicUrl(`${c.id}/bill.pdf`);
+
+    return {
+      id: c.id,
+      name: c.name || '',
+      phone: c.phone || '',
+      status: c.status || 'Pending',
+      totalBill: Number(c.total_bill || c.totalBill || 0),
+      balance: Number(c.balance || 0),
+      receiptNo: receiptParts[0] || '',
+      deliveryDate: receiptParts[1] || c.delivery_date || c.deliveryDate || '',
+      billId: billId || '100',
+      billUrl: c.bill_url || c.billUrl || publicUrl
+    };
+  }), [rawCustomers]);
 
   const filteredCustomers = useMemo(() => customers.filter(c => 
     c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -82,24 +98,72 @@ export const Customers: React.FC = React.memo(() => {
       alert("Name and Phone are mandatory");
       return;
     }
+
+    // Check for duplicate name
+    const isDuplicate = rawCustomers.some(c => c.name?.toLowerCase().trim() === newCustomer.name.toLowerCase().trim());
+    if (isDuplicate) {
+      const confirmed = window.confirm(`A client named "${newCustomer.name}" already exists. Are you sure you want to save a duplicate record?`);
+      if (!confirmed) {
+        return;
+      }
+    }
     
     processingRef.current = true;
     setIsProcessing(true);
     
     try {
-      // 1. Save core customer data
+      // 1. Generate unique Bill ID (No.)
+      const lastBillId = rawCustomers.length > 0 
+        ? Math.max(...rawCustomers.map(c => parseInt(c.billId) || 0)) 
+        : 100;
+      const nextBillId = (lastBillId + 1).toString();
+
+      // 2. Save core customer data
       const record = {
         name: newCustomer.name,
         phone: newCustomer.phone,
         status: 'Pending',
         total_bill: newCustomer.totalBill,
         balance: Math.max(0, newCustomer.totalBill - newCustomer.initialAmount),
-        receipt_no: `${new Date().toLocaleDateString('en-GB')} | TBD` // Format: OrderDate | DeliveryDate
+        receipt_no: `#INV-${nextBillId} | ${newCustomer.deliveryDate || 'TBD'}`
       };
 
       const customerId = await addRecord('customers', record);
       
-      // 2. Save measurements (wrapped in try-catch to be resilient)
+      // 3. Generate & Upload Bill PDF
+      if (customerId) {
+        try {
+          const pdfBlob = generateInvoicePDF({
+            invoiceNumber: nextBillId,
+            date: new Date().toLocaleDateString('en-GB'),
+            clientName: newCustomer.name,
+            clientPhone: newCustomer.phone,
+            projectName: 'Tailoring Service',
+            projectId: customerId.slice(0, 8).toUpperCase(),
+            items: [{
+              name: 'Tailoring & Stitching',
+              description: 'Custom tailored outfit',
+              quantity: 1,
+              unitPrice: newCustomer.totalBill,
+              total: newCustomer.totalBill
+            }],
+            subtotal: newCustomer.totalBill,
+            totalAmount: newCustomer.totalBill,
+            amountPaid: newCustomer.initialAmount,
+            balance: Math.max(0, newCustomer.totalBill - newCustomer.initialAmount),
+            isPaid: newCustomer.initialAmount >= newCustomer.totalBill,
+            onlyBlob: true
+          });
+
+          if (pdfBlob) {
+            await uploadFile('invoices', `${customerId}/bill.pdf`, pdfBlob);
+          }
+        } catch (pdfErr) {
+          console.warn("Bill PDF generation/upload failed:", pdfErr);
+        }
+      }
+
+      // 4. Save measurements
       if (customerId) {
         try {
           await addRecord('measurements', {
@@ -113,7 +177,7 @@ export const Customers: React.FC = React.memo(() => {
         }
       }
 
-      // 3. UI Success flow
+      // 5. UI Success flow
       setShowSuccess(true);
       setTimeout(() => {
         setShowSuccess(false);
@@ -135,7 +199,7 @@ export const Customers: React.FC = React.memo(() => {
       }, 1000);
     } catch (err) {
       console.error("Save failed:", err);
-      alert("Error saving client. Please check your connection.");
+      alert("Error saving client: " + (err.message || JSON.stringify(err)));
       setIsProcessing(false);
       processingRef.current = false;
     }
@@ -347,7 +411,6 @@ export const Customers: React.FC = React.memo(() => {
                     <div key={f.key} className="space-y-1.5">
                       <label className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest text-primary/40">{f.label}</label>
                       <input 
-                        required={f.key!=='totalBill'} 
                         type={f.type} 
                         value={(newCustomer as any)[f.key]} 
                         onChange={e => setNewCustomer({...newCustomer, [f.key]: f.type==='number' ? Number(e.target.value) : e.target.value})} 
@@ -357,25 +420,80 @@ export const Customers: React.FC = React.memo(() => {
                   ))}
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 sm:gap-12">
-                  <div className="space-y-4 sm:space-y-6">
-                    <h4 className="font-headline text-xl sm:text-2xl italic text-primary border-b border-primary/10 pb-2">Blouse</h4>
-                    <div className="grid grid-cols-2 gap-3 sm:gap-4">
-                      {['uc', 'mc', 'waist', 'shoulder', 'armhole', 'shDart', 'dDart', 'htB', 'htF', 'neckB', 'neckF', 'slLn', 'slRnd'].map(k => (
-                        <div key={k} className="flex items-center justify-between p-2 sm:p-3 rounded-lg sm:rounded-xl bg-primary/[0.02] border border-primary/5">
-                          <label className="text-[9px] font-bold uppercase text-primary/40">{k}</label>
-                          <input type="text" value={(newCustomer.measurements as any)[k]} onChange={e => setNewCustomer({...newCustomer, measurements: {...newCustomer.measurements, [k]: e.target.value}})} className="w-12 sm:w-16 bg-transparent text-right font-mono text-primary outline-none text-sm" />
+                <div className="space-y-12">
+                  {/* Category: Blouse */}
+                  <div className="space-y-6">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+                        <span className="material-symbols-outlined">checkroom</span>
+                      </div>
+                      <h4 className="font-headline text-2xl italic text-primary">Blouse Essentials</h4>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {[
+                        { key: 'uc', label: 'Upper Chest' },
+                        { key: 'mc', label: 'Middle Chest' },
+                        { key: 'waist', label: 'Waist' },
+                        { key: 'shoulder', label: 'Shoulder' },
+                        { key: 'armhole', label: 'Armhole' },
+                        { key: 'shDart', label: 'Shoulder Dart' },
+                        { key: 'dDart', label: 'Double Dart' },
+                        { key: 'htB', label: 'Height (Back)' },
+                        { key: 'htF', label: 'Height (Front)' },
+                        { key: 'neckB', label: 'Neck (Back)' },
+                        { key: 'neckF', label: 'Neck (Front)' },
+                        { key: 'slLn', label: 'Sleeve Length' },
+                        { key: 'slRnd', label: 'Sleeve Round' },
+                      ].map(f => (
+                        <div key={f.key} className="flex flex-col gap-1.5 p-4 rounded-2xl bg-white dark:bg-white/5 border border-primary/10 shadow-sm focus-within:ring-2 focus-within:ring-primary/20 transition-all">
+                          <label className="text-[8px] font-black uppercase tracking-widest text-primary/40">{f.label}</label>
+                          <input 
+                            type="text" 
+                            placeholder="0.0"
+                            value={(newCustomer.measurements as any)[f.key]} 
+                            onChange={e => setNewCustomer({...newCustomer, measurements: {...newCustomer.measurements, [f.key]: e.target.value}})} 
+                            className="bg-transparent font-headline text-lg text-primary outline-none" 
+                          />
                         </div>
                       ))}
                     </div>
                   </div>
-                  <div className="space-y-4 sm:space-y-6">
-                    <h4 className="font-headline text-xl sm:text-2xl italic text-primary border-b border-primary/10 pb-2">Top & Bottom</h4>
-                    <div className="grid grid-cols-2 gap-3 sm:gap-4">
-                      {['topLength', 'waistIn', 'waistRd', 'hipIn', 'hipRd', 'seatIn', 'seatRd', 'topNeckB', 'topNeckF', 'bottomLn', 'thigh', 'knee', 'ankle', 'skirtLn', 'floorLn'].map(k => (
-                        <div key={k} className="flex items-center justify-between p-2 sm:p-3 rounded-lg sm:rounded-xl bg-primary/[0.02] border border-primary/5">
-                          <label className="text-[9px] font-bold uppercase text-primary/40">{k}</label>
-                          <input type="text" value={(newCustomer.measurements as any)[k]} onChange={e => setNewCustomer({...newCustomer, measurements: {...newCustomer.measurements, [k]: e.target.value}})} className="w-12 sm:w-16 bg-transparent text-right font-mono text-primary outline-none text-sm" />
+
+                  {/* Category: Top & Bottom */}
+                  <div className="space-y-6">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
+                        <span className="material-symbols-outlined">straighten</span>
+                      </div>
+                      <h4 className="font-headline text-2xl italic text-primary">Top & Bottom</h4>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {[
+                        { key: 'topLength', label: 'Top Length' },
+                        { key: 'waistIn', label: 'Waist (In)' },
+                        { key: 'waistRd', label: 'Waist (Rd)' },
+                        { key: 'hipIn', label: 'Hip (In)' },
+                        { key: 'hipRd', label: 'Hip (Rd)' },
+                        { key: 'seatIn', label: 'Seat (In)' },
+                        { key: 'seatRd', label: 'Seat (Rd)' },
+                        { key: 'topNeckB', label: 'Top Neck (B)' },
+                        { key: 'topNeckF', label: 'Top Neck (F)' },
+                        { key: 'bottomLn', label: 'Bottom Length' },
+                        { key: 'thigh', label: 'Thigh' },
+                        { key: 'knee', label: 'Knee' },
+                        { key: 'ankle', label: 'Ankle' },
+                        { key: 'skirtLn', label: 'Skirt Length' },
+                        { key: 'floorLn', label: 'Floor Length' },
+                      ].map(f => (
+                        <div key={f.key} className="flex flex-col gap-1.5 p-4 rounded-2xl bg-white dark:bg-white/5 border border-primary/10 shadow-sm focus-within:ring-2 focus-within:ring-primary/20 transition-all">
+                          <label className="text-[8px] font-black uppercase tracking-widest text-primary/40">{f.label}</label>
+                          <input 
+                            type="text" 
+                            placeholder="0.0"
+                            value={(newCustomer.measurements as any)[f.key]} 
+                            onChange={e => setNewCustomer({...newCustomer, measurements: {...newCustomer.measurements, [f.key]: e.target.value}})} 
+                            className="bg-transparent font-headline text-lg text-primary outline-none" 
+                          />
                         </div>
                       ))}
                     </div>

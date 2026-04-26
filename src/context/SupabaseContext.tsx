@@ -29,6 +29,7 @@ interface DataContextType {
   addRecord: (tableName: string, data: any) => Promise<string>;
   updateRecord: (tableName: string, id: string, data: any) => Promise<void>;
   deleteRecord: (tableName: string, id: string) => Promise<void>;
+  uploadFile: (bucketName: string, path: string, file: Blob) => Promise<string>;
   logout: () => Promise<void>;
 }
 
@@ -242,6 +243,21 @@ export const SupabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     await fetchData();
   }, [fetchData]);
 
+  const uploadFile = React.useCallback(async (bucketName: string, path: string, file: Blob) => {
+    const { data, error } = await supabase.storage.from(bucketName).upload(path, file, {
+      upsert: true,
+      contentType: 'application/pdf'
+    });
+
+    if (error) {
+      console.error(`[Supabase] Upload Error (${bucketName}):`, error);
+      throw error;
+    }
+
+    const { data: { publicUrl } } = supabase.storage.from(bucketName).getPublicUrl(path);
+    return publicUrl;
+  }, []);
+
   const logout = async () => {
     await supabase.auth.signOut();
   };
@@ -261,10 +277,11 @@ export const SupabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     addRecord,
     updateRecord,
     deleteRecord,
+    uploadFile,
     logout
   }), [
     loading, user, students, courses, payments, inventory, customers, measurements, 
-    attendance, studentCourses, inventoryTransactions, addRecord, updateRecord, deleteRecord, logout
+    attendance, studentCourses, inventoryTransactions, addRecord, updateRecord, deleteRecord, uploadFile, logout
   ]);
 
   return (
