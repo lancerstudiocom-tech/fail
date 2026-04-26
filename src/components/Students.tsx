@@ -1,15 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useFirebase } from '../context/FirebaseContext';
+import { useSupabase } from '../context/SupabaseContext';
 import { Card, Button } from './ClayUI';
-import { Plus, Trash2, UserPlus, Search, Users, Camera, Image, X, Check, Loader2, FileDown, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Plus, Trash2, UserPlus, Search, Users, X, Check, Loader2, FileDown, AlertTriangle, RefreshCw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { scanReceiptLocal, parseOCRText } from '../services/ocrService';
-import { detectColorLine } from '../services/geminiService';
+import { generateReceiptId } from '../lib/utils';
 import { cn } from '../lib/utils';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
 
-import { CameraStreamScanner } from './CameraStreamScanner';
+import { generateInvoicePDF } from '../utils/invoiceGenerator';
+import { generateCertificatePDF } from '../utils/certificateGenerator';
+import { FileText, Award } from 'lucide-react';
 
 interface Student {
   id: string;
@@ -47,8 +46,8 @@ interface StudentsProps {
   initialSelectedId?: string | null;
 }
 
-export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
-  const { students, payments, studentCourses, addRecord, updateRecord, deleteRecord, loading: contextLoading } = useFirebase();
+export const Students: React.FC<StudentsProps> = React.memo(({ initialSelectedId }) => {
+  const { courses, students, payments, studentCourses, addRecord, updateRecord, deleteRecord, loading: contextLoading } = useSupabase();
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [loading, setLoading] = useState(false);
   const [studentPayments, setStudentPayments] = useState<Payment[]>([]);
@@ -57,13 +56,8 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
   const [isRecordingPayment, setIsRecordingPayment] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
-  const [showReviewModal, setShowReviewModal] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
-  const [isScanning, setIsScanning] = useState(false);
-  const [showCamera, setShowCamera] = useState(false);
-  const [scannedData, setScannedData] = useState<any>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [newStudent, setNewStudent] = useState({
     name: '',
@@ -102,11 +96,11 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
       const filteredPayments = payments
         .filter((p: any) => p.studentId === selectedStudent.id)
         .sort((a: any, b: any) => {
-          const dateA = a.date?.toDate ? a.date.toDate() : new Date(a.date);
-          const dateB = b.date?.toDate ? b.date.toDate() : new Date(b.date);
+          const dateA = new Date(a.date);
+          const dateB = new Date(b.date);
           return dateB.getTime() - dateA.getTime();
         });
-      setStudentPayments(filteredPayments);
+      setStudentPayments(filteredPayments as Payment[]);
 
       const filteredCourses = studentCourses.filter((c: any) => c.studentId === selectedStudent.id);
       setCurrentStudentCourses(filteredCourses);
@@ -126,13 +120,15 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
 
     setIsRecordingPayment(true);
     try {
+      const receiptNo = generateReceiptId('PAY');
       const paymentData = {
         studentId: selectedStudent.id,
         amount: amount,
         type: 'credit',
         method: 'Cash',
         notes: 'Tuition Payment',
-        date: new Date().toISOString()
+        date: new Date().toISOString(),
+        receipt_no: receiptNo
       };
 
       // 1. Add Payment Record
@@ -156,63 +152,10 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
 
   const filteredStudents = students.filter(s => 
     s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    s.phone?.includes(searchQuery) ||
+    s.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
     s.courses?.some(c => c.toLowerCase().includes(searchQuery.toLowerCase()))
   );
-
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setIsScanning(true);
-    try {
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64 = reader.result as string;
-        console.log("Image loaded, starting OCR...");
-        const result = await scanReceiptLocal(base64);
-        if (result && result.rawText) {
-          console.log("AI Analysis Result Found:", result.rawText);
-          handleStreamResult(result);
-        } else {
-          console.warn("AI Analysis failed completely or returned no text");
-          setShowCamera(false);
-          setShowAddModal(true);
-        }
-        setIsScanning(false);
-      };
-      reader.readAsDataURL(file);
-    } catch (err) {
-      console.error("Upload error:", err);
-      setIsScanning(false);
-    }
-  };
-
-  const handleStreamResult = (data: any) => {
-    if (!data) return;
-    
-    if (data.isScanning !== undefined) {
-      setIsScanning(data.isScanning);
-      return;
-    }
-
-    // Kill OCR Loop
-    setScannedData(data);
-    setNewStudent({
-      name: data.name || '',
-      phone: data.phone || '',
-      courses: data.courses || [],
-      totalFee: data.totalAmount || 0,
-      initialAmount: data.paidAmount || 0,
-      amountPaid: data.paidAmount || 0,
-      receiptNumber: data.receiptNumber || '',
-      date: data.date || new Date().toISOString().split('T')[0],
-      paymentMethod: data.paymentMethod || 'Cash',
-      rawText: data.rawText || ''
-    });
-    
-    setShowCamera(false);
-    setShowReviewModal(true);
-  };
 
   const [balance, setBalance] = useState(0);
 
@@ -233,6 +176,7 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
       const totalFee = Number(newStudent.totalFee) || 0;
       const initialAmount = Number(newStudent.initialAmount) || 0;
       const balanceValue = totalFee - initialAmount;
+      const receiptNo = newStudent.receiptNumber || generateReceiptId('ST');
 
       // 1. Save Student
       const studentId = await addRecord('students', {
@@ -264,7 +208,8 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
           type: 'credit',
           method: newStudent.paymentMethod || 'Cash',
           notes: `Initial payment for: ${newStudent.courses.map(c => c.name).join(', ')}`,
-          date: new Date().toISOString()
+          date: new Date().toISOString(),
+          receipt_no: receiptNo
         });
       }
 
@@ -273,7 +218,6 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
       setTimeout(() => {
         setShowSuccess(false);
         setShowAddModal(false);
-        setShowReviewModal(false);
         setNewStudent({ 
           name: '', 
           phone: '',
@@ -297,11 +241,7 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
 
   const removeAllStudents = async () => {
     try {
-      // For Firestore, we typically delete one by one or via batch
-      // Purge is dangerous, but we'll implement it as requested
-      for (const s of students) {
-        await deleteRecord('students', s.id);
-      }
+      await Promise.all(students.map(s => deleteRecord('students', s.id)));
       setShowDeleteConfirm(false);
     } catch (error) {
       console.error("Purge Error:", error);
@@ -319,12 +259,8 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
     }
   };
 
-  const handlePrint = () => {
-    window.print();
-  };
-
   const exportToPDF = () => {
-    const doc = new jsPDF();
+    const doc = new (window as any).jsPDF();
     
     // Add title
     doc.setFontSize(18);
@@ -346,7 +282,7 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
       `INR ${student.balance}`
     ]);
 
-    autoTable(doc, {
+    (window as any).autoTable(doc, {
       head: [tableColumn],
       body: tableRows,
       startY: 40,
@@ -395,7 +331,21 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
               <span className="material-symbols-outlined text-xl">delete_sweep</span>
             </Button>
             <Button 
-              onClick={() => setShowAddModal(true)}
+              onClick={() => {
+                setNewStudent({
+                  name: '',
+                  phone: '',
+                  courses: [],
+                  totalFee: 0,
+                  initialAmount: 0,
+                  amountPaid: 0,
+                  receiptNumber: '',
+                  date: new Date().toISOString().split('T')[0],
+                  paymentMethod: 'Cash',
+                  rawText: ''
+                });
+                setShowAddModal(true);
+              }}
               variant="primary"
               className="flex-1 sm:flex-none btn-premium"
             >
@@ -427,7 +377,7 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
             <div 
               key={student.id} 
               onClick={() => setSelectedStudent(student)}
-              className="glass-card p-6 sm:p-8 flex flex-col xl:flex-row xl:items-center justify-between gap-8 group relative overflow-hidden cursor-pointer hover:translate-y-[-4px] transition-all duration-300"
+              className="glass-card p-6 sm:p-8 flex flex-col xl:flex-row xl:items-center justify-between gap-8 group relative overflow-hidden cursor-pointer hover:translate-y-[-2px] transition-all duration-200"
             >
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-8 w-full">
                 <div className="flex items-center gap-6 sm:gap-8">
@@ -451,7 +401,7 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-4 sm:gap-12 lg:gap-16 pt-6 lg:pt-0 border-t lg:border-t-0 border-primary/5">
+                <div className="grid grid-cols-3 gap-4 sm:gap-12 lg:gap-16 pt-6 lg:pt-0">
                   <div className="text-left sm:text-right space-y-1">
                     <p className="font-headline text-lg sm:text-2xl text-[#800033]/60">₹{student.totalFee}</p>
                     <p className="font-label text-[8px] text-[#800033]/60 uppercase tracking-widest font-bold">Total</p>
@@ -471,12 +421,35 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
               </div>
 
               <div className="absolute top-4 right-4 flex items-center gap-2">
-                {student.id.startsWith('local-') && (
-                  <div className="flex items-center gap-2 bg-amber-500/10 px-3 py-1.5 rounded-full border border-amber-500/20 shadow-sm">
-                    <span className="material-symbols-outlined text-xs text-amber-500 animate-spin">sync</span>
-                    <span className="text-[9px] text-amber-500 uppercase font-black tracking-widest">Syncing</span>
-                  </div>
-                )}
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    generateInvoicePDF({
+                      invoiceNumber: (student as any).receipt_no || `RCT-${student.id.slice(0,8).toUpperCase()}`,
+                      date: new Date().toLocaleDateString(),
+                      clientName: student.name,
+                      projectName: "Tailoring Course Enrollment",
+                      projectId: student.id.slice(0,8).toUpperCase(),
+                      items: (student.courses || []).map(c => ({
+                        name: c,
+                        description: "Professional Tailoring Instruction",
+                        quantity: 1,
+                        unitPrice: student.totalFee / (student.courses?.length || 1),
+                        total: student.totalFee / (student.courses?.length || 1)
+                      })),
+                      subtotal: student.totalFee,
+                      totalAmount: student.totalFee,
+                      amountPaid: student.amountPaid,
+                      balance: student.balance,
+                      isPaid: student.balance === 0,
+                      autoPrint: true
+                    });
+                  }}
+                  className="w-10 h-10 rounded-full flex items-center justify-center text-primary hover:bg-primary/5 transition-colors"
+                  title="Download Receipt"
+                >
+                  <FileText className="w-5 h-5" />
+                </button>
                 <button 
                   onClick={(e) => {
                     e.stopPropagation();
@@ -493,49 +466,6 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
           ))
         )}
       </div>
-
-      {/* Floating Scan Button */}
-      <div className="absolute bottom-32 right-8 z-40 flex flex-col gap-4">
-        <input 
-          type="file" 
-          ref={fileInputRef}
-          onChange={handleImageUpload}
-          accept="image/*"
-          className="hidden"
-        />
-        <Button 
-          onClick={() => fileInputRef.current?.click()}
-          className="h-16 px-6 rounded-full shadow-2xl flex items-center justify-center gap-3 bg-white/40 backdrop-blur-xl text-primary transition-all hover:scale-110 active:scale-95 border border-white/60"
-          disabled={isScanning}
-          title="Upload Receipt Image"
-        >
-          <Image className="w-6 h-6 text-primary" />
-          <span className="font-bold text-xs uppercase tracking-widest">Upload Bill</span>
-        </Button>
-        <Button 
-          onClick={() => setShowCamera(true)}
-          className="h-16 px-6 rounded-full shadow-2xl flex items-center justify-center gap-3 bg-white/40 backdrop-blur-xl text-primary transition-all hover:scale-110 active:scale-95 border border-white/60"
-          disabled={isScanning}
-          title="Scan with Camera"
-        >
-          {isScanning ? (
-            <RefreshCw className="w-6 h-6 animate-spin text-primary" />
-          ) : (
-            <Camera className="w-6 h-6 text-primary" />
-          )}
-          <span className="font-bold text-xs uppercase tracking-widest">Scan Camera</span>
-        </Button>
-      </div>
-
-      {/* Camera Stream Scanner */}
-      {showCamera && (
-        <CameraStreamScanner 
-          onResult={handleStreamResult}
-          onClose={() => setShowCamera(false)}
-          isScanning={isScanning}
-          type="student"
-        />
-      )}
 
       {/* Delete Confirmation Modal */}
       <AnimatePresence>
@@ -584,22 +514,6 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
         )}
       </AnimatePresence>
 
-      {/* Scanning Toast */}
-      <AnimatePresence>
-        {isScanning && (
-          <motion.div 
-            initial={{ opacity: 0, y: 50 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 50 }}
-            className="fixed bottom-12 left-1/2 -translate-x-1/2 z-[200]"
-          >
-            <div className="bg-primary text-white px-8 py-4 rounded-full shadow-2xl flex items-center gap-4 border border-white/10">
-              <RefreshCw className="w-5 h-5 animate-spin" />
-              <p className="font-bold text-xs uppercase tracking-widest">Processing Archive Image...</p>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
       <AnimatePresence>
         {showAddModal && (
           <div className="absolute inset-0 z-[100] flex items-center justify-center p-6 bg-black/20 backdrop-blur-sm">
@@ -671,18 +585,26 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
                     
                     {newStudent.courses.map((course, idx) => (
                       <div key={idx} className="flex gap-3">
-                        <input 
+                        <select 
                           required
-                          type="text" 
                           value={course.name}
                           onChange={e => {
                             const updated = [...newStudent.courses];
                             updated[idx].name = e.target.value;
+                            // Automatically set the fee based on the selected course
+                            const selectedCourse = courses.find(c => c.name === e.target.value);
+                            if (selectedCourse) {
+                              updated[idx].amount = selectedCourse.fee;
+                            }
                             setNewStudent({...newStudent, courses: updated});
                           }}
-                          className="flex-1 input-premium"
-                          placeholder="e.g. Embroidery"
-                        />
+                          className="flex-1 input-premium appearance-none bg-surface-container"
+                        >
+                          <option value="" disabled>Select Course</option>
+                          {courses.map(c => (
+                            <option key={c.id} value={c.name}>{c.name} - ₹{c.fee}</option>
+                          ))}
+                        </select>
                         <input 
                           required
                           type="number" 
@@ -837,7 +759,7 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
                   <div className="glass-card bg-primary/5 p-6 space-y-1">
                     <p className="label-caps !text-primary/40">Total Fees</p>
-                    <p className="font-headline text-2xl text-primary italic">₹{selectedStudent.totalFees}</p>
+                    <p className="font-headline text-2xl text-primary italic">₹{selectedStudent.totalFee}</p>
                   </div>
                   <div className="glass-card bg-primary/5 p-6 space-y-1">
                     <p className="label-caps !text-primary/40">Paid</p>
@@ -892,7 +814,7 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
                         <p className="label-caps !text-primary/30">No course records found</p>
                       </div>
                     ) : (
-                      studentCourses.map((sc) => (
+                      currentStudentCourses.map((sc) => (
                         <div key={sc.id} className="flex items-center justify-between p-4 glass-card bg-white/5 border border-primary/5 hover:border-primary/20 transition-colors">
                           <div className="flex items-center gap-4">
                             <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
@@ -923,13 +845,13 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
                   </div>
                   
                   <div className="space-y-4 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
-                    {isFetchingPayments ? (
+                    {contextLoading ? (
                       <div className="flex items-center justify-center py-10">
                         <Loader2 className="w-6 h-6 text-primary animate-spin" />
                       </div>
                     ) : studentPayments.length === 0 ? (
                       <div className="flex flex-col items-center justify-center py-32 glass-card bg-primary/5 border-dashed border-2 px-6">
-                        <p className="label-caps !text-primary/40">No students found matching your search</p>
+                        <p className="label-caps !text-primary/40">No records found</p>
                       </div>
                     ) : (
                       studentPayments.map((payment) => (
@@ -959,7 +881,26 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
               <div className="flex flex-col sm:flex-row justify-between items-center gap-8 pt-6">
                 <div className="flex gap-4 w-full sm:w-auto">
                   <Button 
-                    onClick={handlePrint}
+                    onClick={() => generateInvoicePDF({
+                      invoiceNumber: (selectedStudent as any).receipt_no || `RCT-${selectedStudent.id.slice(0,8).toUpperCase()}`,
+                      date: new Date().toLocaleDateString(),
+                      clientName: selectedStudent.name,
+                      projectName: "Tailoring Course Enrollment",
+                      projectId: selectedStudent.id.slice(0,8).toUpperCase(),
+                      items: (selectedStudent.courses || []).map(c => ({
+                        name: c,
+                        description: "Professional Tailoring Instruction",
+                        quantity: 1,
+                        unitPrice: selectedStudent.totalFee / (selectedStudent.courses?.length || 1),
+                        total: selectedStudent.totalFee / (selectedStudent.courses?.length || 1)
+                      })),
+                      subtotal: selectedStudent.totalFee,
+                      totalAmount: selectedStudent.totalFee,
+                      amountPaid: selectedStudent.amountPaid,
+                      balance: selectedStudent.balance,
+                      isPaid: selectedStudent.balance === 0,
+                      autoPrint: true
+                    })}
                     variant="secondary"
                     className="flex-1 sm:flex-none flex items-center justify-center gap-3 px-6 py-3 rounded-full"
                   >
@@ -977,6 +918,37 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
                     <span className="material-symbols-outlined text-sm">delete</span>
                     Delete
                   </Button>
+                  <Button 
+                    onClick={() => {
+                      if (selectedStudent.balance > 0) return;
+                      generateCertificatePDF({
+                        studentName: selectedStudent.name,
+                        courseName: selectedStudent.courses?.join(', ') || "Tailoring Professional",
+                        date: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }),
+                        certificateId: `CERT-${new Date().getFullYear()}-${selectedStudent.id.slice(0,6).toUpperCase()}`,
+                        duration: selectedStudent.courses?.map(cName => {
+                          const course = courses.find(dbC => dbC.name === cName);
+                          return course ? course.duration : '';
+                        }).filter(d => d).join(' + ') || "Duration Not Specified",
+                        instituteAddress: "Sumi Tailoring Institute, West Bengal • sumitailoring.com"
+                      });
+                    }}
+                    variant={selectedStudent.balance > 0 ? "secondary" : "primary"}
+                    disabled={selectedStudent.balance > 0}
+                    className={cn(
+                      "flex-1 sm:flex-none flex items-center justify-center gap-3 px-8 py-3 rounded-full transition-all duration-500",
+                      selectedStudent.balance > 0 
+                        ? "bg-slate-100 text-slate-400 cursor-not-allowed border-slate-200" 
+                        : "bg-emerald-600 hover:bg-emerald-700 shadow-lg shadow-emerald-600/20 text-white"
+                    )}
+                  >
+                    {selectedStudent.balance > 0 ? (
+                      <span className="material-symbols-outlined text-sm">lock</span>
+                    ) : (
+                      <Award className="w-4 h-4" />
+                    )}
+                    {selectedStudent.balance > 0 ? "Account Not Settled" : "Download Certificate"}
+                  </Button>
                 </div>
                 <Button 
                   onClick={() => setSelectedStudent(null)}
@@ -990,186 +962,6 @@ export const Students: React.FC<StudentsProps> = ({ initialSelectedId }) => {
           </div>
         )}
       </AnimatePresence>
-
-      {/* OCR Review Modal */}
-      <AnimatePresence>
-        {showReviewModal && (
-          <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-surface">
-            <motion.div 
-              initial={false}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="w-full max-w-md glass-card p-10 space-y-10 relative overflow-hidden shadow-2xl max-h-[90vh] overflow-y-auto custom-scrollbar"
-            >
-              <AnimatePresence>
-                {showSuccess && (
-                  <motion.div 
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    className="absolute inset-0 z-50 bg-white/95 flex flex-col items-center justify-center gap-6"
-                  >
-                    <div className="w-24 h-24 rounded-full glass-card bg-primary/10 flex items-center justify-center">
-                      <span className="material-symbols-outlined text-primary text-5xl animate-bounce">check_circle</span>
-                    </div>
-                    <p className="font-headline text-2xl text-primary italic">Record Archived Successfully</p>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              <div className="flex items-center justify-between">
-                <div className="space-y-2">
-                  <h3 className="font-headline text-4xl text-primary italic">Institute Student Enrollment</h3>
-                  <p className="font-label text-[10px] text-primary/40 uppercase tracking-[0.2em] font-bold">Digital Analysis Complete</p>
-                </div>
-                <div className="px-4 py-2 glass-card bg-primary/5 text-primary text-[10px] font-label uppercase tracking-widest font-bold border border-primary/10">
-                  OCR Detected
-                </div>
-              </div>
-
-              <div className="space-y-8">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-3">
-                    <label className="text-primary font-bold uppercase tracking-widest text-[10px] opacity-70">Phone</label>
-                    <input 
-                      type="text" 
-                      value={newStudent.phone}
-                      onChange={e => setNewStudent({...newStudent, phone: e.target.value})}
-                      className="w-full input-premium text-black dark:text-white dark:font-bold"
-                    />
-                  </div>
-                  <div className="space-y-3">
-                    <label className="text-primary font-bold uppercase tracking-widest text-[10px] opacity-70">Payment Method</label>
-                    <select 
-                      value={newStudent.paymentMethod}
-                      onChange={e => setNewStudent({...newStudent, paymentMethod: e.target.value})}
-                      className="w-full input-premium text-black dark:text-white dark:font-bold"
-                    >
-                      <option value="Cash">Cash</option>
-                      <option value="UPI">UPI</option>
-                      <option value="Card">Card</option>
-                      <option value="Bank Transfer">Bank Transfer</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  <label className="text-primary font-bold uppercase tracking-widest text-[10px] opacity-70">Extracted Raw Text (Editable)</label>
-                  <textarea 
-                    value={newStudent.rawText}
-                    onChange={e => {
-                      const text = e.target.value;
-                      const lines = text.split('\n');
-                      const parsed = parseOCRText(lines);
-                      setNewStudent({
-                        ...newStudent,
-                        ...parsed,
-                        rawText: text
-                      });
-                    }}
-                    className="w-full input-premium text-xs font-mono h-32 resize-none"
-                    placeholder="Raw OCR text will appear here..."
-                  />
-                  <p className="text-[8px] text-primary/40 italic">Editing this text will automatically re-parse the fields below.</p>
-                </div>
-
-                <div className="space-y-3">
-                  <label className="text-primary font-bold uppercase tracking-widest text-[10px] opacity-70">Detected Courses</label>
-                  <div className="space-y-2">
-                    {newStudent.courses.map((course, idx) => (
-                      <div key={idx} className="flex gap-2">
-                        <input 
-                          type="text" 
-                          value={course.name}
-                          onChange={e => {
-                            const updated = [...newStudent.courses];
-                            updated[idx].name = e.target.value;
-                            setNewStudent({...newStudent, courses: updated});
-                          }}
-                          className="flex-1 input-premium text-black dark:text-white dark:font-bold"
-                          placeholder="Course Name"
-                        />
-                        <input 
-                          type="number" 
-                          value={course.amount}
-                          onChange={e => {
-                            const updated = [...newStudent.courses];
-                            updated[idx].amount = Number(e.target.value);
-                            setNewStudent({...newStudent, courses: updated});
-                          }}
-                          className="w-24 input-premium text-black dark:text-white dark:font-bold"
-                          placeholder="Amount"
-                        />
-                      </div>
-                    ))}
-                    <Button 
-                      onClick={() => setNewStudent({...newStudent, courses: [...newStudent.courses, { name: '', amount: 0 }]})}
-                      variant="secondary" 
-                      className="w-full py-2 text-[10px] uppercase tracking-widest"
-                    >
-                      + Add Course
-                    </Button>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-3">
-                    <label className="text-primary font-bold uppercase tracking-widest text-[10px] opacity-70">Receipt No</label>
-                    <input 
-                      type="text" 
-                      value={newStudent.receiptNumber}
-                      onChange={e => setNewStudent({...newStudent, receiptNumber: e.target.value})}
-                      className="w-full input-premium text-black dark:text-white dark:font-bold"
-                    />
-                  </div>
-                  <div className="space-y-3">
-                    <label className="text-primary font-bold uppercase tracking-widest text-[10px] opacity-70">Date</label>
-                    <input 
-                      type="date" 
-                      value={newStudent.date}
-                      onChange={e => setNewStudent({...newStudent, date: e.target.value})}
-                      className="w-full input-premium text-black dark:text-white dark:font-bold"
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-3">
-                    <label className="text-primary font-bold uppercase tracking-widest text-[10px] opacity-70">Total Amount (₹)</label>
-                    <input 
-                      type="number" 
-                      value={newStudent.totalFee || ''}
-                      onChange={e => setNewStudent({...newStudent, totalFee: Number(e.target.value)})}
-                      className="w-full input-premium text-black dark:text-white dark:font-bold"
-                    />
-                  </div>
-                  <div className="space-y-3">
-                    <label className="text-primary font-bold uppercase tracking-widest text-[10px] opacity-70">Initial Amount (₹)</label>
-                    <input 
-                      type="number" 
-                      value={newStudent.initialAmount || ''}
-                      onChange={e => setNewStudent({...newStudent, initialAmount: Number(e.target.value)})}
-                      className="w-full input-premium text-black dark:text-white dark:font-bold"
-                    />
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  <label className="text-primary font-bold uppercase tracking-widest text-[10px] opacity-70">Balance (₹)</label>
-                  <input 
-                    readOnly
-                    type="number" 
-                    value={balance}
-                    className="w-full input-premium text-black dark:text-white dark:font-bold opacity-60"
-                  />
-                </div>
-              </div>
-
-              <div className="flex gap-6 pt-4">
-                <Button onClick={() => setShowReviewModal(false)} variant="secondary" className="flex-1 py-4 rounded-full">Discard</Button>
-                <Button onClick={() => handleAddStudent()} variant="primary" className="flex-1 py-4 rounded-full">Enroll Student</Button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
     </div>
   );
-};
+});

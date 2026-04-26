@@ -11,19 +11,15 @@ import { Customers } from './components/Customers';
 import { Works } from './components/Works';
 import { Courses } from './components/Courses';
 import { SettingsPage } from './components/SettingsPage';
-import { useFirebase } from './context/FirebaseContext';
+import { useSupabase } from './context/SupabaseContext';
 import { Login } from './components/Login';
 import { LogOut } from 'lucide-react';
 
 export default function App() {
-  const { user, loading } = useFirebase();
+  const { user, loading, logout } = useSupabase();
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [triggerScan, setTriggerScan] = useState(false);
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    return localStorage.getItem('tailor_auth_session') === 'true';
-  });
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     return (localStorage.getItem('tailor_theme') as 'light' | 'dark') || 'light';
   });
@@ -59,23 +55,21 @@ export default function App() {
     );
   }
 
-  if (!isAuthenticated) {
+  if (!user) {
     return (
       <div className={cn(
         "min-h-screen transition-all duration-1000 flex justify-center selection:bg-primary/20",
         theme === 'light' 
           ? "bg-[radial-gradient(circle_at_top_right,_#fff5f9_0%,_#ffe4ee_50%,_#fff0f6_100%)]" 
-          : "bg-[radial-gradient(circle_at_top_right,_#1a0108_0%,_#0a0a0a_100%)]"
+          : "bg-[#0d0106]"
       )}>
-        <Login onLogin={() => setIsAuthenticated(true)} />
+        <Login />
       </div>
     );
   }
 
-  const handleLogout = () => {
-    localStorage.removeItem('tailor_auth_session');
-    localStorage.removeItem('tailor_auth_timestamp');
-    setIsAuthenticated(false);
+  const handleLogout = async () => {
+    await logout();
   };
 
   const handleStudentClick = (student: any) => {
@@ -87,19 +81,17 @@ export default function App() {
     switch (activeTab) {
       case 'dashboard': return (
         <Dashboard 
-          onScanClick={() => { setActiveTab('customers'); setTriggerScan(true); }} 
           onStudentClick={handleStudentClick}
         />
       );
       case 'students': return <Students initialSelectedId={selectedStudentId} />;
       case 'courses': return <Courses />;
       case 'inventory': return <Stock />;
-      case 'customers': return <Customers triggerScan={triggerScan} onScanHandled={() => setTriggerScan(false)} />;
+      case 'customers': return <Customers />;
       case 'works': return <Works />;
       case 'settings': return <SettingsPage theme={theme} toggleTheme={toggleTheme} onLogout={handleLogout} />;
       default: return (
         <Dashboard 
-          onScanClick={() => { setActiveTab('customers'); setTriggerScan(true); }} 
           onStudentClick={handleStudentClick}
         />
       );
@@ -111,43 +103,43 @@ export default function App() {
       "min-h-screen transition-all duration-1000 flex justify-center selection:bg-primary/20",
       theme === 'light' 
         ? "bg-[radial-gradient(circle_at_top_right,_#fff5f9_0%,_#ffe4ee_50%,_#fff0f6_100%)]" 
-        : "bg-[radial-gradient(circle_at_top_right,_#1a0108_0%,_#0a0a0a_100%)]"
+        : "bg-[#0d0106]"
     )}>
       <div className="w-full max-w-[500px] min-h-screen relative overflow-x-hidden bg-transparent">
         {/* TopAppBar */}
-        <header className="bg-white/30 dark:bg-black/40 backdrop-blur-[60px] saturate-[250%] border-b border-white/40 dark:border-white/10 sticky top-0 z-50 h-32 flex items-center transition-all">
-          <div className="flex justify-between items-center w-full px-10">
+        <header className="bg-white/60 dark:bg-black/60 backdrop-blur-xl sticky top-0 z-50 h-24 flex items-center transition-all">
+          <div className="flex justify-between items-center w-full px-6">
             <div className="flex items-center gap-6 overflow-hidden">
               <button 
                 onClick={() => setIsSidebarOpen(true)}
-                className="w-16 h-16 glass-card text-primary flex items-center justify-center shrink-0 border-white/80 shadow-premium"
+                className="w-12 h-12 glass-card text-primary flex items-center justify-center shrink-0 border-white/80 shadow-premium"
               >
-                <span className="material-symbols-outlined text-4xl font-black">menu</span>
+                <span className="material-symbols-outlined text-2xl font-black">menu</span>
               </button>
                 <div className="flex flex-col">
-                  <h1 className="font-headline text-5xl italic text-primary leading-none tracking-tighter truncate drop-shadow-sm">Sumi</h1>
-                  <p className="label-caps text-[9px] mt-1">Tailoring Institute</p>
+                  <h1 className="font-headline text-3xl italic text-primary leading-none tracking-tighter truncate drop-shadow-sm">Sumi</h1>
+                  <p className="label-caps text-[8px] mt-0.5">Tailoring Institute</p>
                 </div>
             </div>
             <div className="flex items-center gap-3">
               <button 
                 onClick={toggleTheme}
-                className="w-12 h-12 glass-card flex items-center justify-center shrink-0 border-white/60"
+                className="w-10 h-10 glass-card flex items-center justify-center shrink-0 border-white/60"
                 title={theme === 'light' ? "Switch to Dark Mode" : "Switch to Light Mode"}
               >
-                {theme === 'light' ? <Moon className="w-5 h-5 text-primary" /> : <Sun className="w-5 h-5 text-primary" />}
+                {theme === 'light' ? <Moon className="w-4 h-4 text-primary" /> : <Sun className="w-4 h-4 text-primary" />}
               </button>
               <button 
                 onClick={() => setActiveTab('settings')}
                 className={cn(
-                   "w-12 h-12 glass-card p-1 transition-all active:scale-90 shrink-0 border-white/60",
+                   "w-10 h-10 glass-card p-1 transition-all active:scale-90 shrink-0 border-white/60",
                    activeTab === 'settings' && "ring-2 ring-primary/20"
                 )}
               >
                 <img 
                    alt="User" 
                    className="w-full h-full rounded-full object-cover" 
-                   src={user.photoURL || "https://lh3.googleusercontent.com/aida-public/AB6AXuA_Xnwc6gWP0vxwRGyvpsMiXwU9wAI3kUFij5b8bb9n7kxIY1Rf3rxl9O6NqYnb6nyPVLlxUlgP4HqD607UN5Wq9Ag8MdCOBp67EDWDIcvajSXFCSKvm1iaMgOvbhhAL3D2tfaeHZnQqBWuEClSwSLGxeenr-h0NA-N7ryN2dKktD45OLpslrwsUis2pF5KzTr4XtzuaSyLWEjoyN7-qat2VMkqPb6X9gZ_2JrwI3Krqwe02WdQjFHalHLaACVW4tXysN1EGHszQ3ex"}
+                   src={user?.user_metadata?.avatar_url || (user as any)?.photoURL || "https://lh3.googleusercontent.com/aida-public/AB6AXuA_Xnwc6gWP0vxwRGyvpsMiXwU9wAI3kUFij5b8bb9n7kxIY1Rf3rxl9O6NqYnb6nyPVLlxUlgP4HqD607UN5Wq9Ag8MdCOBp67EDWDIcvajSXFCSKvm1iaMgOvbhhAL3D2tfaeHZnQqBWuEClSwSLGxeenr-h0NA-N7ryN2dKktD45OLpslrwsUis2pF5KzTr4XtzuaSyLWEjoyN7-qat2VMkqPb6X9gZ_2JrwI3Krqwe02WdQjFHalHLaACVW4tXysN1EGHszQ3ex"}
                 />
               </button>
             </div>
@@ -156,17 +148,7 @@ export default function App() {
   
         {/* Main Content */}
         <main className="px-4 py-8">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={activeTab}
-              initial={{ opacity: 0, scale: 0.98, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.98, y: -10 }}
-              transition={{ duration: 0.4, ease: [0.23, 1, 0.32, 1] }}
-            >
-              {renderPage()}
-            </motion.div>
-          </AnimatePresence>
+          {renderPage()}
         </main>
   
         <nav className="nav-glass mb-4">
@@ -213,7 +195,7 @@ export default function App() {
               animate={{ x: 0 }}
               exit={{ x: '-100%' }}
               transition={{ type: 'spring', damping: 35, stiffness: 200 }}
-              className="fixed top-0 left-0 bottom-0 w-[85%] max-w-[340px] bg-white/80 dark:bg-black/80 backdrop-blur-[60px] saturate-[200%] z-[110] border-r border-white/80 p-12 flex flex-col shadow-[20px_0_80px_rgba(255,27,107,0.15)]"
+              className="fixed top-0 left-0 bottom-0 w-[85%] max-w-[340px] bg-white/90 dark:bg-black/90 backdrop-blur-xl z-[110] border-r border-white/20 p-12 flex flex-col shadow-2xl"
             >
               <div className="flex justify-between items-center mb-20">
                 <div className="flex flex-col">
@@ -238,7 +220,7 @@ export default function App() {
  
               <div className="pt-12 border-t border-primary/20">
                 <a 
-                  href={`mailto:support@sumitailoring.com?subject=[Sumi Tailoring Support] Issue Report&body=Please describe the issue you are experiencing:%0D%0A%0D%0A[Your description here]%0D%0A%0D%0A---%0D%0AUser: ${user.email}%0D%0ADate: ${new Date().toLocaleString()}`}
+                  href={`mailto:support@sumitailoring.com?subject=[Sumi Tailoring Support] Issue Report&body=Please describe the issue you are experiencing:%0D%0A%0D%0A[Your description here]%0D%0A%0D%0A---%0D%0AUser: ${user?.email || 'Unknown'}%0D%0ADate: ${new Date().toLocaleString()}`}
                   className="w-full btn-premium py-6 flex items-center justify-center gap-4 text-sm"
                 >
                   <LifeBuoy className="w-6 h-6" />

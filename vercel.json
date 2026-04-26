@@ -1,4 +1,5 @@
 {
+  "name": "sumi-tailoring-institute",
   "rewrites": [
     {
       "source": "/(.*)",

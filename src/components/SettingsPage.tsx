@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Card, Button } from './ClayUI';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
-import { useFirebase } from '../context/FirebaseContext';
+import { useSupabase } from '../context/SupabaseContext';
 
 export interface SettingsPageProps {
   theme: 'light' | 'dark';
@@ -11,44 +11,8 @@ export interface SettingsPageProps {
 }
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, toggleTheme, onLogout }) => {
-  const { user } = useFirebase();
-  const [syncStats, setSyncStats] = useState({
-    students: 0,
-    customers: 0,
-    stock: 0
-  });
-
+  const { user } = useSupabase();
   const isDarkMode = theme === 'dark';
-
-  useEffect(() => {
-    // Load sync stats from localStorage
-    const loadStats = () => {
-      const s = JSON.parse(localStorage.getItem('tailor_pending_students') || '[]');
-      const c = JSON.parse(localStorage.getItem('tailor_pending_customers') || '[]');
-      const st = JSON.parse(localStorage.getItem('tailor_pending_stock') || '[]');
-      setSyncStats({
-        students: s.length,
-        customers: c.length,
-        stock: st.length
-      });
-    };
-
-    loadStats();
-    const interval = setInterval(loadStats, 2000);
-    return () => {
-      clearInterval(interval);
-    };
-  }, []);
-
-  const clearCache = () => {
-    // In a real app, we'd use a custom modal instead of confirm()
-    localStorage.removeItem('tailor_pending_students');
-    localStorage.removeItem('tailor_pending_customers');
-    localStorage.removeItem('tailor_pending_stock');
-    setSyncStats({ students: 0, customers: 0, stock: 0 });
-  };
-
-  const hasPending = syncStats.students > 0 || syncStats.customers > 0 || syncStats.stock > 0;
 
   return (
     <div className="p-6 flex flex-col gap-8 relative min-h-[calc(100vh-200px)] pb-32">
@@ -70,8 +34,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, toggleTheme, 
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="w-16 h-16 rounded-full glass-card-inset overflow-hidden bg-primary/5 flex items-center justify-center">
-              {user?.photoURL ? (
-                <img src={user.photoURL} alt={user.displayName || 'User'} className="w-full h-full object-cover" />
+               {user?.user_metadata?.avatar_url || (user as any)?.photoURL ? (
+                <img src={user?.user_metadata?.avatar_url || (user as any)?.photoURL} alt={user?.user_metadata?.full_name || (user as any)?.displayName || 'User'} className="w-full h-full object-cover" />
               ) : (
                 <span className="material-symbols-outlined text-primary/40 text-3xl">person</span>
               )}
@@ -84,7 +48,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, toggleTheme, 
         </div>
       </Card>
 
-      {/* Sync Status Section */}
+      {/* Appearance Section */}
       <div className="flex flex-col gap-4">
         <h3 className="label-caps !text-primary/40 px-2">Appearance</h3>
         <Card className="p-6 glass-card flex items-center justify-between">
@@ -113,43 +77,19 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, toggleTheme, 
           </button>
         </Card>
 
-        <h3 className="label-caps !text-primary/40 px-2">Data Synchronization</h3>
+        <h3 className="label-caps !text-primary/40 px-2">System Status</h3>
         <Card className="p-6 glass-card flex flex-col gap-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className={cn(
-                "w-10 h-10 rounded-full glass-card-inset flex items-center justify-center transition-colors",
-                hasPending ? "bg-primary/10 text-primary" : "bg-green-500/10 text-green-500"
-              )}>
-                <span className={cn("material-symbols-outlined text-xl", hasPending && "animate-spin")}>
-                  {hasPending ? 'sync' : 'cloud_done'}
-                </span>
+              <div className="w-10 h-10 rounded-full bg-green-500/10 text-green-500 flex items-center justify-center">
+                <span className="material-symbols-outlined text-xl">cloud_done</span>
               </div>
               <div>
-                <p className="font-headline text-lg tracking-tight text-primary italic">
-                  {hasPending ? 'Syncing Changes...' : 'All Data Synced'}
-                </p>
-                <p className="font-body text-[10px] text-primary/40">
-                  {hasPending ? 'Background sync in progress' : 'Cloud database is up to date'}
-                </p>
+                <p className="font-headline text-lg tracking-tight text-primary italic">Connected to Supabase</p>
+                <p className="font-body text-[10px] text-primary/40">Live cloud database active</p>
               </div>
             </div>
           </div>
-
-          <div className="space-y-3">
-            <SyncItem label="Students" count={syncStats.students} />
-            <SyncItem label="Customers" count={syncStats.customers} />
-            <SyncItem label="Inventory" count={syncStats.stock} />
-          </div>
-
-          <Button 
-            onClick={clearCache}
-            disabled={!hasPending}
-            variant="secondary"
-            className="w-full py-4 text-xs font-headline disabled:opacity-30"
-          >
-            Clear Local Cache
-          </Button>
         </Card>
       </div>
 
@@ -186,23 +126,3 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ theme, toggleTheme, 
     </div>
   );
 };
-
-const SyncItem = ({ label, count }: { label: string, count: number }) => (
-  <div className="flex items-center justify-between py-2 border-b border-primary/5 last:border-0">
-    <span className="font-body text-sm text-primary/60">{label}</span>
-    <div className="flex items-center gap-2">
-      <span className={cn(
-        "font-mono text-xs font-bold",
-        count > 0 ? "text-primary" : "text-primary/20"
-      )}>
-        {count}
-      </span>
-      <span className={cn(
-        "material-symbols-outlined text-sm",
-        count > 0 ? "text-primary" : "text-primary/20"
-      )}>
-        {count > 0 ? 'pending' : 'check_circle'}
-      </span>
-    </div>
-  </div>
-);

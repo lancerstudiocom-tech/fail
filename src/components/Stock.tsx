@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useFirebase } from '../context/FirebaseContext';
+import { useSupabase } from '../context/SupabaseContext';
 import { Card, Button } from './ClayUI';
 import { motion, AnimatePresence } from 'motion/react';
 import { Package, Plus, Trash2, AlertTriangle, Check, RefreshCw } from 'lucide-react';
@@ -25,8 +25,8 @@ interface InventoryTransaction {
   date: string;
 }
 
-export const Stock: React.FC = () => {
-  const { inventory: items, inventoryTransactions, addRecord, updateRecord, deleteRecord, loading: contextLoading } = useFirebase();
+export const Stock: React.FC = React.memo(() => {
+  const { inventory: items, inventoryTransactions, addRecord, updateRecord, deleteRecord, loading: contextLoading } = useSupabase();
   const [showAddModal, setShowAddModal] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -35,6 +35,7 @@ export const Stock: React.FC = () => {
     totalQuantityBought: 0,
     costPerItem: 0
   });
+  const [itemToDelete, setItemToDelete] = useState<InventoryItem | null>(null);
 
   const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,11 +63,20 @@ export const Stock: React.FC = () => {
     }
   };
 
+  const handleDeleteItem = async () => {
+    if (!itemToDelete) return;
+    try {
+      await deleteRecord('inventory', itemToDelete.id);
+      setShowDeleteConfirm(false);
+      setItemToDelete(null);
+    } catch (error) {
+      console.error("Delete Error:", error);
+    }
+  };
+
   const removeAllStock = async () => {
     try {
-      for (const item of items) {
-        await deleteRecord('inventory', item.id);
-      }
+      await Promise.all(items.map(item => deleteRecord('inventory', item.id)));
       setShowDeleteConfirm(false);
     } catch (error) {
       console.error("Purge Error:", error);
@@ -177,16 +187,24 @@ export const Stock: React.FC = () => {
           </div>
         ) : (
           items.map((item) => (
-            <Card key={item.id} className={cn(
-              "p-6 flex flex-col gap-4 glass-card transition-all hover:scale-[1.01]",
-              item.isPending && "opacity-70 border-dashed border-primary/40"
-            )}>
+            <Card key={item.id} className="p-6 flex flex-col gap-4 glass-card transition-all hover:scale-[1.01]">
               <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="font-headline text-lg tracking-tight text-primary italic">{item.name}</h4>
+                <div className="flex-1">
+                  <div className="flex items-center justify-between mb-1">
+                    <h4 className="font-headline text-lg tracking-tight text-primary italic">{item.name}</h4>
+                    <button 
+                      onClick={() => {
+                        setItemToDelete(item);
+                        setShowDeleteConfirm(true);
+                      }}
+                      className="p-2 hover:bg-rose-500/10 text-rose-500 rounded-lg transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                   <p className="font-mono text-[10px] text-pink-500 uppercase tracking-wider font-bold">₹{item.costPerItem} / unit</p>
                 </div>
-                <div className="text-right">
+                <div className="text-right ml-4">
                   <p className="font-headline text-2xl text-primary leading-none italic">{item.quantityRemaining}</p>
                   <p className="label-caps !text-[8px] mt-1">Remaining</p>
                 </div>
@@ -328,21 +346,40 @@ export const Stock: React.FC = () => {
       {/* Delete Confirmation Modal */}
       <AnimatePresence>
         {showDeleteConfirm && (
-          <div className="fixed inset-0 z-[120] flex items-center justify-center p-6 bg-black/30 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[150] flex items-center justify-center p-6 bg-black/40 backdrop-blur-sm">
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
+              exit={{ opacity: 0, scale: 0.95 }}
               className="w-full max-w-sm glass-card p-8 text-center"
             >
-              <div className="w-20 h-20 rounded-full glass-card-inset bg-rose-500/5 flex items-center justify-center mx-auto mb-6">
-                <AlertTriangle className="text-rose-500 w-10 h-10" />
+              <div className="w-20 h-20 rounded-full bg-rose-500/10 flex items-center justify-center mx-auto mb-6 text-rose-500">
+                <AlertTriangle className="w-10 h-10" />
               </div>
-              <h3 className="font-headline text-2xl tracking-tight text-primary italic mb-2">Clear Inventory?</h3>
-              <p className="font-body text-sm text-primary/60 mb-6">This will permanently remove all stock records.</p>
-              <div className="flex gap-3">
-                <Button onClick={() => setShowDeleteConfirm(false)} className="flex-1 py-4" variant="secondary">Cancel</Button>
-                <Button onClick={removeAllStock} variant="red" className="flex-1 py-4">Delete All</Button>
+              <h3 className="font-headline text-2xl tracking-tight text-primary italic mb-2">Are you sure?</h3>
+              <p className="font-body text-sm text-primary/60 mb-8 px-4 leading-relaxed">
+                {itemToDelete 
+                  ? `Do you really want to delete "${itemToDelete.name}"? This action cannot be undone.`
+                  : "Do you really want to clear ALL stock items? This action cannot be undone."
+                }
+              </p>
+              <div className="flex flex-col gap-3">
+                <Button 
+                  onClick={itemToDelete ? handleDeleteItem : removeAllStock}
+                  className="w-full bg-rose-500 text-white border-none py-5 rounded-xl font-bold uppercase tracking-widest text-[10px]"
+                >
+                  Yes, Delete
+                </Button>
+                <Button 
+                  onClick={() => {
+                    setShowDeleteConfirm(false);
+                    setItemToDelete(null);
+                  }}
+                  variant="secondary"
+                  className="w-full rounded-xl"
+                >
+                  Cancel
+                </Button>
               </div>
             </motion.div>
           </div>
@@ -429,4 +466,4 @@ export const Stock: React.FC = () => {
       </AnimatePresence>
     </div>
   );
-};
+});

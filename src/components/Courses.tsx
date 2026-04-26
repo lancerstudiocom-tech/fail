@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useFirebase } from '../context/FirebaseContext';
+import { useSupabase } from '../context/SupabaseContext';
 import { Card, Button } from './ClayUI';
 import { GraduationCap, Plus, Trash2, BookOpen, Check, X, CreditCard, Calendar, IndianRupee, FileDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -43,7 +43,7 @@ interface StudentCourse {
   createdAt: any;
 }
 
-export const Courses: React.FC = () => {
+export const Courses: React.FC = React.memo(() => {
   const { 
     courses, 
     students, 
@@ -53,7 +53,7 @@ export const Courses: React.FC = () => {
     updateRecord, 
     deleteRecord, 
     loading: contextLoading 
-  } = useFirebase();
+  } = useSupabase();
   
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -98,6 +98,16 @@ export const Courses: React.FC = () => {
 
   const handleAddCourse = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Prevent duplicate courses
+    const isDuplicate = courses.some(
+      c => c.name.trim().toLowerCase() === newCourse.name.trim().toLowerCase()
+    );
+    if (isDuplicate) {
+      alert("A course with this name already exists!");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       await addRecord('courses', newCourse);
@@ -1155,4 +1165,4 @@ export const Courses: React.FC = () => {
       </AnimatePresence>
     </div>
   );
-};
+});

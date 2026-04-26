@@ -1,30 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Lock, User, Eye, EyeOff, ShieldCheck, RefreshCw } from 'lucide-react';
+import { Lock, Mail, Eye, EyeOff, ShieldCheck, RefreshCw } from 'lucide-react';
 import { Button } from './ClayUI';
 import { cn } from '../lib/utils';
+import { supabase } from '../lib/supabase';
 
-interface LoginProps {
-  onLogin: () => void;
-}
-
-// Simple SHA-256 hash function using SubtleCrypto
-const hashValue = async (value: string) => {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(value);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-};
-
-// Target Hashes for "sumi" and "xrinav"
-const TARGET_USER_HASH = "d754a0fb21f2b0cfc4cb57e7748ec97fe83c1b7d10ce1c962eb4a151e622b6c6"; // sumi
-const TARGET_PASS_HASH = "786d6c0bd390345ac6d956e9d97813ab48b714bd19403e5a90a5ce650c72e340"; // xrinav (I'll re-calculate these if needed, but these are standard)
-// Let me double check the hashes or just use a helper to verify at runtime.
-// Wait, I'll just hardcode them in a secure way.
-
-export const Login: React.FC<LoginProps> = ({ onLogin }) => {
-  const [username, setUsername] = useState('');
+export const Login: React.FC = () => {
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -36,20 +18,14 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
     setError(null);
 
     try {
-      const userHash = await hashValue(username.toLowerCase().trim());
-      const passHash = await hashValue(password);
-
-      // Verify credentials
-      if (userHash === TARGET_USER_HASH && passHash === TARGET_PASS_HASH) {
-        // Create session
-        localStorage.setItem('tailor_auth_session', 'true');
-        localStorage.setItem('tailor_auth_timestamp', Date.now().toString());
-        onLogin();
-      } else {
-        setError("Invalid credentials. Access Denied.");
-      }
-    } catch (err) {
-      setError("Authentication system error.");
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password: password,
+      });
+      if (error) throw error;
+      // If successful, the auth listener in SupabaseContext will update the state
+    } catch (err: any) {
+      setError(err.message || "Authentication failed. Invalid credentials.");
     } finally {
       setIsAuthenticating(false);
     }
@@ -84,16 +60,16 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-2">
-              <label className="label-caps !text-primary ml-1">Administrator ID</label>
+              <label className="label-caps !text-primary ml-1">Administrator Email</label>
               <div className="relative group">
-                <User className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-primary/40 group-focus-within:text-primary transition-colors" />
+                <Mail className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-primary/40 group-focus-within:text-primary transition-colors" />
                 <input 
                   required
-                  type="text" 
-                  value={username}
-                  onChange={e => setUsername(e.target.value)}
+                  type="email" 
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
                   className="w-full input-premium pl-16 pr-6 py-5 outline-none transition-all text-primary rounded-3xl"
-                  placeholder="Username"
+                  placeholder="admin@sumitailoring.com"
                 />
               </div>
             </div>

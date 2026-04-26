@@ -27,7 +27,7 @@ export const Card: React.FC<CardProps> = ({
   );
 };
 
-interface ButtonProps extends HTMLMotionProps<"button"> {
+interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: 'blue' | 'green' | 'red' | 'purple' | 'primary' | 'secondary';
 }
 
@@ -39,19 +39,17 @@ export const Button: React.FC<ButtonProps> = ({
 }) => {
   const variantClasses = {
     primary: 'btn-premium',
-    secondary: 'bg-primary/10 text-primary border border-primary/20 backdrop-blur-xl hover:bg-primary/20',
-    red: 'bg-rose-500 text-white shadow-[0_10px_20px_rgba(244,63,94,0.3)]',
-    blue: 'bg-primary/10 text-primary border border-primary/20 backdrop-blur-xl hover:bg-primary/20', // Remap blue to secondary
+    secondary: 'bg-primary/10 text-primary border border-primary/20 backdrop-blur-xl hover:bg-primary/20 hover:scale-[1.02] hover:-translate-y-0.5 active:scale-95',
+    red: 'bg-rose-500 text-white shadow-[0_10px_20px_rgba(244,63,94,0.3)] hover:scale-[1.02] hover:-translate-y-0.5 active:scale-95',
+    blue: 'bg-primary/10 text-primary border border-primary/20 backdrop-blur-xl hover:bg-primary/20 hover:scale-[1.02] hover:-translate-y-0.5 active:scale-95', 
     purple: 'btn-premium',
     green: 'btn-premium',
   };
 
   return (
-    <motion.button
-      whileTap={{ scale: 0.95 }}
-      whileHover={{ scale: 1.02, y: -2 }}
+    <button
       className={cn(
-        'relative flex items-center justify-center gap-3 rounded-full font-headline font-bold uppercase tracking-[0.2em] text-[10px] transition-all duration-500',
+        'relative flex items-center justify-center gap-3 rounded-full font-headline font-bold uppercase tracking-[0.2em] text-[10px] transition-all duration-300',
         variantClasses[variant as keyof typeof variantClasses] || variantClasses.primary,
         'px-8 py-4',
         className
@@ -59,7 +57,7 @@ export const Button: React.FC<ButtonProps> = ({
       {...props}
     >
       {children}
-    </motion.button>
+    </button>
   );
 };
 

@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { useFirebase } from '../context/FirebaseContext';
+import { useSupabase } from '../context/SupabaseContext';
 import { Card, Button } from './ClayUI';
 import { Briefcase, Clock, Check, Package, ChevronRight, AlertTriangle, Camera, Lock } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { CameraStreamScanner } from './CameraStreamScanner';
 import { motion, AnimatePresence } from 'motion/react';
+import { generateInvoicePDF } from '../utils/invoiceGenerator';
+import { FileText } from 'lucide-react';
 
 interface WorkOrder {
   id: string;
@@ -14,12 +15,8 @@ interface WorkOrder {
   balance: number;
 }
 
-export const Works: React.FC = () => {
-  const { customers: orders, updateRecord, loading: contextLoading } = useFirebase();
-  const [scanningOrder, setScanningOrder] = useState<WorkOrder | null>(null);
-  const [isScanning, setIsScanning] = useState(false);
-  const [showCamera, setShowCamera] = useState(false);
-  const [scanError, setScanError] = useState<string | null>(null);
+export const Works: React.FC = React.memo(() => {
+  const { customers: orders, updateRecord, loading: contextLoading } = useSupabase();
   const [showPasswordInput, setShowPasswordInput] = useState(false);
   const [password, setPassword] = useState('');
 
@@ -31,53 +28,7 @@ export const Works: React.FC = () => {
     }
   };
 
-  const handleScanResult = async (data: any) => {
-    if (!data) return;
-    
-    if (data.isScanning !== undefined) {
-      setIsScanning(data.isScanning);
-      return;
-    }
 
-    if (!scanningOrder) return;
-
-    const scannedTotal = data.amount || 0;
-    
-    // Logic: Compare scanned total with order total bill
-    // And check if balance is 0
-    if (scannedTotal === scanningOrder.totalBill && scanningOrder.balance === 0) {
-      updateStatus(scanningOrder.id, 'Received');
-      setShowCamera(false);
-      setScanningOrder(null);
-      setScanError(null);
-    } else {
-      let errorMsg = "";
-      if (scannedTotal !== scanningOrder.totalBill) {
-        errorMsg = `Bill Mismatch: Scanned ₹${scannedTotal} vs Order ₹${scanningOrder.totalBill}. `;
-      }
-      if (scanningOrder.balance > 0) {
-        errorMsg += `Payment Pending: ₹${scanningOrder.balance} remaining. Cannot mark as Received.`;
-      }
-      setScanError(errorMsg);
-    }
-  };
-
-  const handlePasswordSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (password === 'tailorsuite') {
-      if (scanningOrder) {
-        updateStatus(scanningOrder.id, 'Received');
-        setShowCamera(false);
-        setShowPasswordInput(false);
-        setScanningOrder(null);
-        setPassword('');
-        setScanError(null);
-      }
-    } else {
-      setScanError("Incorrect Password");
-      setTimeout(() => setScanError(null), 3000);
-    }
-  };
 
   return (
     <div className="p-4 sm:p-8 space-y-10 pb-32 max-w-7xl mx-auto">
@@ -121,14 +72,14 @@ export const Works: React.FC = () => {
               {/* Status Pipeline */}
               <div className="flex items-center justify-between relative pt-6">
                 {/* Connector Line */}
-                <div className="absolute top-[calc(1.5rem+16px)] left-8 right-8 h-[2px] bg-primary/5 z-0"></div>
+                <div className="absolute top-[calc(1.5rem+16px)] left-8 right-8 h-[2px] bg-primary/15 z-0"></div>
                 
                 <StatusStep 
                   active={order.status === 'Pending'} 
                   icon={<Clock className={cn("w-5 h-5", order.status === 'Pending' ? "text-amber-500" : "text-primary/20")} />} 
                   label="In Progress" 
-                  onClick={() => {}}
-                  disabled={order.status !== 'Pending'}
+                  onClick={() => updateStatus(order.id, 'Pending')}
+                  disabled={order.status === 'Pending'}
                   color="text-amber-500"
                 />
                 
@@ -137,127 +88,92 @@ export const Works: React.FC = () => {
                   icon={<Check className={cn("w-5 h-5", order.status === 'Completed' ? "text-primary" : "text-primary/20")} />} 
                   label="Completed" 
                   onClick={() => updateStatus(order.id, 'Completed')}
-                  disabled={order.status === 'Completed' || order.status === 'Out for Delivery' || order.status === 'Received'}
+                  disabled={order.status === 'Completed' || order.status === 'Received'}
                   color="text-primary"
-                />
-
-                <StatusStep 
-                  active={order.status === 'Out for Delivery'} 
-                  icon={<Camera className={cn("w-5 h-5", order.status === 'Out for Delivery' ? "text-purple-500" : "text-primary/20")} />} 
-                  label="Clearance" 
-                  onClick={() => {
-                    setScanningOrder(order);
-                    setShowCamera(true);
-                  }}
-                  disabled={order.status !== 'Completed'}
-                  color="text-purple-500"
                 />
                 
                 <StatusStep 
                   active={order.status === 'Received'} 
                   icon={<Package className={cn("w-5 h-5", order.status === 'Received' ? "text-emerald-500" : "text-primary/20")} />} 
                   label="Delivered" 
-                  onClick={() => {}}
-                  disabled={true}
+                  onClick={() => updateStatus(order.id, 'Received')}
+                  disabled={order.status !== 'Completed'}
                   color="text-emerald-500"
                 />
+              </div>
+
+              <div className="pt-4 flex gap-3">
+                <Button 
+                  onClick={async () => {
+                    if (order.balance > 0) return;
+
+                    // SMART DATE LOGIC
+                    let currentReceiptNo = (order as any).receipt_no || "";
+                    let [orderDate, deliveryDate] = currentReceiptNo.split(' | ');
+                    let finalDeliveryDate = deliveryDate;
+
+                    // If delivery date is TBD, set it to Today and update DB
+                    if (!deliveryDate || deliveryDate === 'TBD') {
+                      finalDeliveryDate = new Date().toLocaleDateString('en-GB');
+                      const updatedReceiptNo = `${orderDate || new Date().toLocaleDateString('en-GB')} | ${finalDeliveryDate}`;
+                      await updateRecord('customers', order.id, {
+                        receipt_no: updatedReceiptNo
+                      });
+                    }
+
+                    generateInvoicePDF({
+                      invoiceNumber: `INV-${order.id.slice(0,8).toUpperCase()}`,
+                      date: finalDeliveryDate, // Use the Delivery Date as the bill date
+                      clientName: order.name,
+                      projectName: "Tailoring Service",
+                      projectId: order.id.slice(0,8).toUpperCase(),
+                      items: [
+                        { name: "Tailoring & Stitching", description: `Order Date: ${orderDate || 'N/A'}`, quantity: 1, unitPrice: order.totalBill, total: order.totalBill }
+                      ],
+                      subtotal: order.totalBill,
+                      totalAmount: order.totalBill,
+                      amountPaid: order.totalBill - order.balance,
+                      balance: order.balance,
+                      isPaid: order.balance === 0,
+                      autoPrint: true
+                    });
+                  }}
+                  variant={order.balance > 0 ? "secondary" : "secondary"}
+                  disabled={order.balance > 0}
+                  className={cn(
+                    "flex-1 py-3 text-[10px] uppercase tracking-widest font-bold flex items-center justify-center gap-2 transition-all duration-300",
+                    order.balance > 0 ? "opacity-50 cursor-not-allowed" : "hover:bg-primary/10"
+                  )}
+                >
+                  {order.balance > 0 ? (
+                    <>
+                      <Lock className="w-3 h-3" />
+                      Locked
+                    </>
+                  ) : (
+                    <>
+                      <FileText className="w-3 h-3" />
+                      Invoice
+                    </>
+                  )}
+                </Button>
+
+                <Button 
+                  onClick={() => {}} 
+                  className="flex-1 py-3 text-[10px] uppercase tracking-widest font-bold"
+                  variant="primary"
+                >
+                  Share
+                </Button>
               </div>
             </div>
           ))
         )}
       </div>
 
-      {/* Camera Scanner for Final Clearance */}
-      {showCamera && (
-        <div className="fixed inset-0 z-[150] bg-black">
-          <CameraStreamScanner 
-            onResult={handleScanResult}
-            onClose={() => {
-              setShowCamera(false);
-              setScanningOrder(null);
-              setScanError(null);
-              setShowPasswordInput(false);
-              setPassword('');
-            }}
-            isScanning={isScanning}
-            title="Final Bill Verification"
-            subtitle="Scan the settled bill to unlock delivery"
-          />
-          
-          {/* Password Approval Button */}
-          <div className="absolute top-6 right-6 z-[200]">
-            <Button 
-              onClick={() => setShowPasswordInput(true)}
-              variant="secondary"
-              className="bg-white/10 backdrop-blur-md border-white/20 text-white px-6 py-3 rounded-full flex items-center gap-2"
-            >
-              <Lock className="w-4 h-4" />
-              Password Approval
-            </Button>
-          </div>
-
-          {/* Password Input Modal */}
-          <AnimatePresence>
-            {showPasswordInput && (
-              <div className="absolute inset-0 z-[300] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6">
-                <motion.div 
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.9 }}
-                  className="w-full max-w-sm glass-card p-10 space-y-8"
-                >
-                  <div className="space-y-2 text-center">
-                    <h3 className="font-headline text-3xl text-primary italic">Clearance Approval</h3>
-                    <p className="label-caps text-[10px] uppercase tracking-widest font-bold">Enter Institute Approval Password</p>
-                  </div>
-                  <form onSubmit={handlePasswordSubmit} className="space-y-6">
-                    <input 
-                      autoFocus
-                      type="password"
-                      value={password}
-                      onChange={e => setPassword(e.target.value)}
-                      placeholder="••••"
-                      className="w-full input-premium text-center text-2xl tracking-[0.5em] text-primary"
-                    />
-                    <div className="flex gap-4">
-                      <Button 
-                        type="button"
-                        onClick={() => {
-                          setShowPasswordInput(false);
-                          setPassword('');
-                        }}
-                        variant="secondary"
-                        className="flex-1 py-4 rounded-full"
-                      >
-                        Cancel
-                      </Button>
-                      <Button 
-                        type="submit"
-                        variant="primary"
-                        className="flex-1 py-4 rounded-full"
-                      >
-                        Approve
-                      </Button>
-                    </div>
-                  </form>
-                </motion.div>
-              </div>
-            )}
-          </AnimatePresence>
-          
-          {scanError && (
-            <div className="absolute top-24 left-1/2 -translate-x-1/2 z-[200] w-[90%] max-w-sm">
-              <div className="bg-error text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3">
-                <AlertTriangle className="w-5 h-5 shrink-0" />
-                <p className="text-xs font-bold uppercase tracking-wider">{scanError}</p>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
-};
+});
 
 interface StatusStepProps {
   active: boolean;
@@ -268,7 +184,7 @@ interface StatusStepProps {
   disabled?: boolean;
 }
 
-const StatusStep: React.FC<StatusStepProps> = ({ active, icon, label, onClick, color, disabled }) => {
+const StatusStep: React.FC<StatusStepProps> = React.memo(({ active, icon, label, onClick, color, disabled }) => {
   return (
     <button 
       onClick={disabled ? undefined : onClick}
@@ -282,17 +198,17 @@ const StatusStep: React.FC<StatusStepProps> = ({ active, icon, label, onClick, c
         "w-12 h-12 rounded-full flex items-center justify-center transition-all duration-500 glass-card",
         active 
           ? `bg-white ${color} scale-110 shadow-lg` 
-          : "bg-primary/5 text-primary/20",
+          : "bg-primary/5 text-primary/40",
         !disabled && !active && "hover:bg-primary/10 hover:text-primary/40 hover:scale-105"
       )}>
         {icon}
       </div>
       <span className={cn(
-        "font-label text-[8px] uppercase tracking-[0.2em] transition-colors duration-300 font-bold",
-        active ? "text-primary" : "text-primary/20"
+        "font-label text-[8px] uppercase tracking-[0.2em] transition-colors duration-300 font-bold text-center",
+        active ? "text-primary" : "text-primary/60"
       )}>
         {label}
       </span>
     </button>
   );
-};
+});
