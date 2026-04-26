@@ -3,6 +3,7 @@ import { useSupabase } from '../context/SupabaseContext';
 import { Card, Button } from './ClayUI';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
+import { BillScanner } from './BillScanner';
 
 // --- Types ---
 interface Measurements {
@@ -41,6 +42,7 @@ export const Customers: React.FC = React.memo(() => {
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [paymentInput, setPaymentInput] = useState<number>(0);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
   const processingRef = useRef(false);
 
   const [newCustomer, setNewCustomer] = useState({
@@ -137,6 +139,21 @@ export const Customers: React.FC = React.memo(() => {
       setIsProcessing(false);
       processingRef.current = false;
     }
+  };
+
+  const handleScanComplete = (data: any) => {
+    setNewCustomer({
+      ...newCustomer,
+      name: data.name || '',
+      phone: data.phone || '',
+      totalBill: data.totalBill || 0,
+      measurements: {
+        ...newCustomer.measurements,
+        ...(data.measurements || {})
+      }
+    });
+    setShowScanner(false);
+    setShowAddModal(true);
   };
 
   const handleUpdatePayment = async (e: React.FormEvent) => {
@@ -253,20 +270,35 @@ export const Customers: React.FC = React.memo(() => {
       </div>
 
       {/* Floating Add Button */}
-      <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-40 w-full max-w-lg px-6">
+      <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-40 w-full max-w-lg px-6 flex gap-3">
+        <Button 
+          onClick={() => setShowScanner(true)}
+          className="w-20 h-14 sm:w-24 sm:h-16 rounded-3xl bg-white text-primary border border-primary/20 shadow-xl flex items-center justify-center shrink-0"
+        >
+          <span className="material-symbols-outlined text-3xl">camera_enhance</span>
+        </Button>
         <Button 
           onClick={() => setShowAddModal(true)}
-          className="w-full rounded-3xl py-6 bg-primary text-white shadow-2xl shadow-primary/40 font-headline text-2xl italic flex items-center justify-center gap-3"
+          className="flex-1 rounded-3xl py-6 bg-primary text-white shadow-2xl shadow-primary/40 font-headline text-2xl italic flex items-center justify-center gap-3"
         >
           <span className="material-symbols-outlined text-3xl">person_add</span>
           NEW CUSTOMER
         </Button>
       </div>
 
+      <AnimatePresence>
+        {showScanner && (
+          <BillScanner 
+            onScanComplete={handleScanComplete}
+            onClose={() => setShowScanner(false)}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Payment Modal */}
       <AnimatePresence>
         {showEditModal && editingCustomer && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-surface/90 sm:backdrop-blur-sm">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm">
             <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className={cn("w-full max-w-md transform-gpu", isProcessing && "pointer-events-none")}>
               <Card className="p-6 sm:p-8 space-y-6 sm:space-y-8 rounded-[32px] sm:rounded-[40px] shadow-2xl border border-primary/10">
                 <div className="flex items-center justify-between">
@@ -295,16 +327,16 @@ export const Customers: React.FC = React.memo(() => {
       {/* Add Customer Modal */}
       <AnimatePresence>
         {showAddModal && (
-          <div className="fixed inset-0 z-[100] flex items-start justify-center p-0 sm:p-6 bg-surface/95 sm:backdrop-blur-md overflow-y-auto">
+          <div className="fixed inset-0 z-[110] flex items-start justify-center p-0 sm:p-6 bg-surface sm:bg-surface/95 sm:backdrop-blur-md overflow-y-auto">
             <motion.div 
               initial={{ opacity: 0, y: 10 }} 
               animate={{ opacity: 1, y: 0 }} 
               className={cn(
-                "w-full max-w-4xl bg-white rounded-t-[32px] sm:rounded-[48px] p-6 sm:p-10 my-0 sm:my-8 shadow-2xl relative min-h-full sm:min-h-0 transform-gpu", 
+                "w-full max-w-4xl bg-surface rounded-t-[32px] sm:rounded-[48px] p-6 sm:p-10 my-0 sm:my-8 shadow-2xl relative min-h-full sm:min-h-0 transform-gpu", 
                 isProcessing && "pointer-events-none"
               )}
             >
-              <div className="flex items-center justify-between mb-6 sm:mb-10 sticky top-0 bg-white z-10 pb-4 border-b border-primary/5 sm:border-none sm:static sm:pb-0">
+              <div className="flex items-center justify-between mb-6 sm:mb-10 sticky top-0 bg-surface z-10 pb-4 border-b border-primary/5 sm:border-none sm:static sm:pb-0">
                 <h3 className="font-headline text-2xl sm:text-4xl italic text-primary">New Client Entry</h3>
                 <button onClick={() => setShowAddModal(false)} className="p-2 sm:p-4 bg-primary/5 rounded-full"><span className="material-symbols-outlined text-2xl sm:text-4xl">close</span></button>
               </div>

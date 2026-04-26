@@ -9,9 +9,10 @@
   --color-primary-dark: #cc0052;
   
   --color-bg-light: #fff5f9;
-  --color-surface-light: #ffffff;
+  --color-surface: #ffffff;
+  --color-surface-dark: #121212;
   
-  --color-text-light: #ff0066; /* Vibrant Pink as requested */
+  --color-text-light: #ff0066;
   --color-text-dark: #ffffff;
   
   --color-accent-pink: #ff0066;
@@ -32,6 +33,7 @@
   .dark body {
     background: #0d0106;
     color: var(--color-text-dark);
+    --color-surface: var(--color-surface-dark);
   }
 
   h1, h2, h3, h4, h5, h6 {
@@ -229,7 +231,7 @@
 }
 
 /* Global Overrides for dark mode issues */
-.dark .bg-white { @apply !bg-transparent; }
+.dark .bg-white { @apply !bg-surface; }
 .dark .text-black { @apply !text-white; }
 .dark .text-primary\/40 { @apply !text-white/40; }
 .dark .text-primary\/60 { @apply !text-white/60; }
